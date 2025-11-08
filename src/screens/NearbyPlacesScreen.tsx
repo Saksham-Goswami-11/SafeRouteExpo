@@ -13,25 +13,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext'; // Path update karein
 import { useRoute, RouteProp } from '@react-navigation/native';
+import { searchNearbyPlaces, Place } from '../services/placesService';
 import * as Location from 'expo-location';
-
-// --- ⚠️ API KEY KO YAHAN NA RAKHEIN (Step 4 dekhein) ---
-// Filhaal test ke liye yahan rakha hai
-const GOOGLE_PLACES_API_KEY = 'AIzaSyB_YhqTW6bgHqPCM-iA2EgJ19nmypn_kMU'; 
-// ----------------------------------------------------
-
-// Define types for places
-interface Place {
-  place_id: string;
-  name: string;
-  vicinity: string; // Addressa
-  geometry: {
-    location: {
-      lat: number;
-      lng: number;
-    };
-  };
-}
 
 // Define route params
 type NearbyPlacesRouteParams = {
@@ -76,23 +59,15 @@ export default function NearbyPlacesScreen() {
       const { latitude, longitude } = location.coords;
 
       // 3. Call Google Places API
-      const radius = 5000; // 5km radius
-      const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${latitude},${longitude}&radius=${radius}&type=${type}&key=${GOOGLE_PLACES_API_KEY}`;
-
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.status === 'OK') {
-        setPlaces(data.results);
-      } else if (data.status === 'ZERO_RESULTS') {
-        setPlaces([]); // Yeh error nahi hai, bas 0 results mile hain
-      } else {
-        console.error('Google Places API Error:', data); // Debugging ke liye
-        setError(data.error_message || 'Failed to fetch places');
-      }
-    } catch (err) {
+      const results = await searchNearbyPlaces(latitude, longitude, type);
+      setPlaces(results);
+    } catch (err: any) {
       console.error(err);
-      setError('An unexpected error occurred');
+      if (err.message === 'API key is missing.') {
+        setError('The application is not configured correctly. API key is missing.');
+      } else {
+        setError('Could not fetch nearby places. Please check your connection and try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -100,7 +75,7 @@ export default function NearbyPlacesScreen() {
 
   // Function to open location in Maps
   const openInMaps = (lat: number, lng: number, label: string) => {
-    const scheme = Platform.OS === 'ios' ? 'maps:0,0?q=' : 'geo:0,0?q=';
+    const scheme = Platform.OS === 'ios' ? 'maps://0,0?q=' : 'geo:0,0?q=';
     const location = `${lat},${lng}`;
     const url = `${scheme}${location}(${label})`;
     // ✅ NAYA (SAFE) CODE:
@@ -136,14 +111,14 @@ export default function NearbyPlacesScreen() {
               {places.length > 0 ? (
                 places.map((place) => (
                   <TouchableOpacity
-                    key={place.place_id}
+                    key={place.id}
                     style={styles.resourceItem}
-                    onPress={() => openInMaps(place.geometry.location.lat, place.geometry.location.lng, place.name)}
+                    onPress={() => openInMaps(place.location.latitude, place.location.longitude, place.displayName.text)}
                   >
                     <Text style={styles.resourceIcon}>{icon}</Text>
                     <View style={styles.resourceContent}>
-                      <Text style={styles.resourceTitle}>{place.name}</Text>
-                      <Text style={styles.resourceSubtitle}>{place.vicinity}</Text>
+                      <Text style={styles.resourceTitle}>{place.displayName.text}</Text>
+                      <Text style={styles.resourceSubtitle}>{place.formattedAddress}</Text>
                     </View>
                     <Text style={styles.resourceArrow}>›</Text>
                   </TouchableOpacity>

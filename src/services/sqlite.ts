@@ -169,7 +169,7 @@ export async function validateSession(token: string): Promise<User | null> {
 
   const session = sessions[0];
   return {
-    id: session.id,
+    id: session.user_id, // Use the user_id from the session, not the session's own id
     email: session.email,
     full_name: session.full_name,
     password_hash: '', // Don't return password hash

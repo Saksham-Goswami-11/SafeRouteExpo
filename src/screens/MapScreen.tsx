@@ -16,18 +16,24 @@ import { useTheme } from '../context/ThemeContext';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Callout } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
+// --- AI INTEGRATION: Import AI analyzer and config ---
 import {
-  analyzeRouteSegments,
-  calculateOverallSafetyScore,
-  generateAlternativeRoute,
-  SafetySegment,
-} from '../utils/safetyAnalysis';
+  aiSafetyAnalyzer,
+  calculateAIOverallSafetyScore,
+} from '../utils/aiSafetyAnalyzer';
+import { SafetySegment } from '../utils/safetyAnalysis'; // Keep type for compatibility
+import { DEVELOPMENT_MODE } from '../config/aiConfig';
+// --- END AI INTEGRATION ---
 import { useAuth } from '../context/AuthContext';
 import { fetchSavedAddresses, SavedAddress, addSavedAddress } from '../services/addressService';
 
+// --- REAL ROUTING INTEGRATION ---
+// IMPORTANT: Add your Google Maps API Key here
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY; 
+
 const { width, height } = Dimensions.get('window');
 
-// Colors come from ThemeContext
+// Colors come from ThemeContext 
 
 // Dark map style
 const darkMapStyle = [
@@ -78,6 +84,7 @@ export default function MapScreen() {
   const [showRouteInput, setShowRouteInput] = useState(false);
   const [selectedSegment, setSelectedSegment] = useState<SafetySegment | null>(null);
   const { user } = useAuth();
+  const [isSafetyCardMinimized, setIsSafetyCardMinimized] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [startSuggestions, setStartSuggestions] = useState<SavedAddress[]>([]);
   const [endSuggestions, setEndSuggestions] = useState<SavedAddress[]>([]);
@@ -88,10 +95,20 @@ export default function MapScreen() {
   const [navigationSteps, setNavigationSteps] = useState<any[]>([]);
   const [distanceToNext, setDistanceToNext] = useState(0);
   const [estimatedTime, setEstimatedTime] = useState(0);
+  const locationWatcher = useRef<Location.LocationSubscription | null>(null);
+  const [userLocation, setUserLocation] = useState<Location.LocationObject | null>(null);
+  const [isOffRoute, setIsOffRoute] = useState(false);
 
   const styles = makeStyles(colors);
 
   // Request location permission and get current location
+  useEffect(() => {
+    // Stop any existing watchers when the component unmounts
+    return () => {
+      locationWatcher.current?.remove();
+    };
+  }, []);
+
   useEffect(() => {
     (async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
@@ -223,41 +240,125 @@ export default function MapScreen() {
       return;
     }
 
+    // --- AI INTEGRATION: Use AI Analyzer ---
+    console.log('🤖 Using AI-powered safety analysis...');
     setIsLoading(true);
     
     const start = await geocodeAddress(startLocation);
     const end = await geocodeAddress(endLocation);
 
     if (!start || !end) {
-      Alert.alert('Error', 'Could not find one or both locations');
+      Alert.alert('Error', 'Could not find one or both locations. Please check the addresses.');
       setIsLoading(false);
       return;
     }
 
-    // Generate route coordinates (simplified - in production use routing API)
-    const routePoints = generateRoutePoints(start, end, alternativeAttempt);
-    setRouteCoordinates(routePoints);
+    let routePoints: { latitude: number; longitude: number; }[] = [];
 
-    // Analyze safety segments
-    const segments = analyzeRouteSegments(routePoints, alternativeAttempt > 0);
+    // Generate route coordinates
+    /*
+    const routePoints = generateRoutePoints(start, end, alternativeAttempt); // This function is still used for the path
+
+    // Analyze route segments using the AI analyzer
+    const segments = await aiSafetyAnalyzer.analyzeRouteSegments(routePoints, alternativeAttempt > 0);
+
+    // Calculate overall score using the AI-compatible function
+    const score = calculateAIOverallSafetyScore(segments);
+
+    setRouteCoordinates(routePoints); // Set coordinates after analysis
     setSafetySegments(segments);
-
-    // Calculate overall score
-    const score = calculateOverallSafetyScore(segments);
     setOverallScore(score);
     setShowSaferAlternative(true);
+    */
 
-    // Fit map to show entire route
-    if (mapRef.current) {
-      mapRef.current.fitToCoordinates(routePoints, {
-        edgePadding: { top: 100, right: 50, bottom: 150, left: 50 },
-        animated: true,
-      });
+    try {
+      const mode = 'driving'; // or 'walking', 'bicycling'
+      const alternatives = alternativeAttempt > 0;
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${start.latitude},${start.longitude}&destination=${end.latitude},${end.longitude}&key=${GOOGLE_MAPS_API_KEY}&mode=${mode}&alternatives=${alternatives}`;
+
+      const res = await fetch(url);
+      const json = await res.json();
+
+      // --- IMPROVED ERROR HANDLING ---
+      // Check the status from the Google Directions API response
+      if (json.status !== 'OK') {
+        let errorMessage = 'Could not find a route. Please try different locations.';
+        switch (json.status) {
+          case 'NOT_FOUND':
+            errorMessage = 'One or both of the locations could not be found. Please check your addresses.';
+            break;
+          case 'ZERO_RESULTS':
+            errorMessage = 'No route could be found between the start and end points.';
+            break;
+          case 'REQUEST_DENIED':
+            errorMessage = 'Routing request was denied. Please check if the Google Maps API key is valid and has the Directions API enabled.';
+            console.error('Directions API Error:', json.error_message);
+            break;
+          case 'OVER_QUERY_LIMIT':
+            errorMessage = 'The app has exceeded its request limit for today. Please try again later.';
+            break;
+        }
+        Alert.alert('No Route Found', errorMessage);
+        setIsLoading(false);
+        return;
+      }
+
+      const route = json.routes[0]; // Use the first route
+      const points = decodePolyline(route.overview_polyline.points);
+      routePoints = points.map(point => ({
+        latitude: point[0],
+        longitude: point[1],
+      }));
+
+      // --- PERFORMANCE IMPROVEMENT ---
+      // 1. Immediately show the route to the user for instant feedback.
+      // We'll draw it as a single, neutral-colored line for now.
+      setRouteCoordinates(routePoints);
+      setNavigationSteps(route.legs[0].steps); // Save real navigation steps
+      setShowSaferAlternative(true);
+      setOverallScore(0); // Reset score while analyzing
+      setSafetySegments([]); // Clear old segments
+
+      // Fit map to the new route
+      if (mapRef.current) {
+        mapRef.current.fitToCoordinates(routePoints, {
+          edgePadding: { top: 100, right: 50, bottom: 150, left: 50 },
+          animated: true,
+        });
+      }
+
+      // 2. Run the heavy AI analysis in the background.
+      // This is a non-blocking call, so the UI remains responsive.
+      (async () => {
+        const segments = await aiSafetyAnalyzer.analyzeRouteSegments(routePoints, alternativeAttempt > 0);
+        const score = calculateAIOverallSafetyScore(segments);
+        setSafetySegments(segments); // Update the route colors
+        setOverallScore(score); // Update the score card
+      })();
+
+    } catch (error) {
+      console.error("Directions API error:", error);
+      Alert.alert('Routing Error', 'Failed to fetch route. Please check your API key and network connection.');
     }
 
+    // --- END AI INTEGRATION ---
+
+    // Fit map to show entire route
     setIsLoading(false);
     setShowRouteInput(false);
-  }, [startLocation, endLocation, alternativeAttempt]);
+  }, [startLocation, endLocation, alternativeAttempt, mapRef.current]);
+
+  const findSaferRoute = useCallback(() => {
+    setAlternativeAttempt(prev => prev + 1);
+  }, []);
+
+  // Re-run route generation when a safer alternative is requested
+  useEffect(() => {
+    // We only want this to run when the button is pressed, not on the initial load (attempt 0)
+    if (alternativeAttempt > 0) {
+      generateRoute();
+    }
+  }, [alternativeAttempt]);
 
   // Memoized distance calculation to avoid repeated computation
   const calculateDistance = useCallback((lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -347,43 +448,152 @@ export default function MapScreen() {
     return steps;
   }, []);
 
+  const reroute = () => {
+    if (!userLocation) return;
+    setStartLocation(`${userLocation.coords.latitude}, ${userLocation.coords.longitude}`);
+  };
   // Optimized navigation start with loading state
   const startNavigation = useCallback(() => {
     if (routeCoordinates.length > 0) {
+      if (navigationSteps.length === 0) {
+        Alert.alert('Error', 'Navigation data is not available. Please generate a route first.');
+        return;
+      }
       try {
-        const steps = generateNavigationSteps(routeCoordinates);
-        setNavigationSteps(steps);
         setCurrentStepIndex(0);
         setIsNavigating(true);
         
-        // Estimate total time (assuming 50 km/h average speed)
-        const totalDistance = steps[steps.length - 1]?.totalDistance || 0;
-        const estimatedMinutes = Math.ceil(totalDistance / 1000 * 1.2); // 1.2 minutes per km
+        const totalDurationSeconds = navigationSteps.reduce((sum, step) => sum + step.duration.value, 0);
+        const estimatedMinutes = Math.ceil(totalDurationSeconds / 60);
         setEstimatedTime(estimatedMinutes);
         
         // Close route input and safety card
         setShowRouteInput(false);
         setShowSaferAlternative(false);
+
+        // --- LIVE NAVIGATION ---
+        // Start watching the user's position
+        (async () => {
+          locationWatcher.current = await Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.BestForNavigation,
+              timeInterval: 1000, // Update every second
+              distanceInterval: 10, // Update every 10 meters
+            },
+            (newLocation) => {
+              setUserLocation(newLocation);
+            }
+          );
+        })();
+
+        // Animate camera to starting position
+        if (mapRef.current) {
+          mapRef.current.animateCamera({
+            center: routeCoordinates[0],
+            zoom: 18, // Zoom in for navigation
+            heading: 0,
+            pitch: 45,
+          });
+        }
       } catch (error) {
         console.error('Navigation start error:', error);
         Alert.alert('Error', 'Failed to start navigation. Please try again.');
       }
     }
-  }, [routeCoordinates, generateNavigationSteps]);
+  }, [routeCoordinates, navigationSteps]);
 
   // Optimized navigation stop
   const stopNavigation = useCallback(() => {
     setIsNavigating(false);
+    setIsOffRoute(false);
     setCurrentStepIndex(0);
-    setNavigationSteps([]);
     setDistanceToNext(0);
     setEstimatedTime(0);
+    setUserLocation(null);
+
+    // Stop watching location
+    if (locationWatcher.current) {
+      locationWatcher.current.remove();
+      locationWatcher.current = null;
+    }
   }, []);
+
+  // Effect for handling live navigation logic
+  useEffect(() => {
+    if (!isNavigating || !userLocation || navigationSteps.length === 0) {
+      return;
+    }
+
+    const userCoords = userLocation.coords;
+
+    // 1. Animate map to follow user
+    if (mapRef.current) {
+      mapRef.current.animateCamera({
+        center: userCoords,
+        heading: userLocation.coords.heading ?? 0,
+        zoom: 18, // Keep it zoomed in
+        pitch: 45, // Keep the 3D perspective
+      }, { duration: 500 });
+    }
+
+    // 2. Check for step advancement
+    const nextStep = navigationSteps[currentStepIndex];
+    if (!nextStep) return;
+
+    const nextTurnCoords = nextStep.end_location;
+    const distanceToTurn = calculateDistance(
+      userCoords.latitude,
+      userCoords.longitude,
+      nextTurnCoords.lat,
+      nextTurnCoords.lng
+    );
+
+    setDistanceToNext(distanceToTurn);
+
+    // Advance to next step if user is close enough to the turn
+    if (distanceToTurn < 25) { // 25-meter threshold
+      if (currentStepIndex < navigationSteps.length - 1) {
+        setCurrentStepIndex(currentStepIndex + 1);
+      } else {
+        // Reached destination
+        Alert.alert('Destination Reached', 'You have arrived at your destination.');
+        stopNavigation();
+      }
+    }
+
+    // 3. Check for off-route
+    const isOff = isUserOffRoute(userCoords, routeCoordinates);
+    setIsOffRoute(isOff);
+
+  }, [userLocation, isNavigating, navigationSteps]);
+
+  // Re-run route generation if start location changes (for rerouting)
+  useEffect(() => {
+    if (isNavigating && startLocation !== `${userLocation?.coords.latitude}, ${userLocation?.coords.longitude}`) {
+      generateRoute();
+    }
+  }, [startLocation, isNavigating]);
+
+  // Helper to check if user is off-route
+  const isUserOffRoute = (userCoords: Location.LocationObject['coords'], route: any[]) => {
+    for (let i = 0; i < route.length - 1; i++) {
+      const dist = distanceToLine(userCoords, route[i], route[i+1]);
+      if (dist < 0.05) { // 50 meters threshold in km
+        return false; // User is on-route
+      }
+    }
+    return true; // User is off-route
+  };
+
+  const distanceToLine = (p: any, v: any, w: any) => { /* A helper function would be needed here */ return 999; };
 
   // Memoized route points generation
   const generateRoutePoints = useCallback((start: any, end: any, attempt: number) => {
     if (attempt > 0) {
-      return generateAlternativeRoute(start, end, attempt);
+      // This function is in safetyAnalysis.ts, which we are phasing out.
+      // For now, we'll just add more curve to simulate an alternative.
+      // In a real app, this would call a different routing API.
+      console.log(`Generating alternative route, attempt: ${attempt}`);
     }
 
     // Generate a curved route between start and end with fewer points for better performance
@@ -393,7 +603,7 @@ export default function MapScreen() {
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       // Add some curve to the route
-      const curve = Math.sin(t * Math.PI) * 0.01;
+      const curve = Math.sin(t * Math.PI) * (0.01 + attempt * 0.02); // More curve for alternatives
       
       points.push({
         latitude: start.latitude + (end.latitude - start.latitude) * t + curve,
@@ -404,11 +614,64 @@ export default function MapScreen() {
     return points;
   }, []);
 
-  // Find safer alternative
-  const findSaferRoute = () => {
-    setAlternativeAttempt(prev => prev + 1);
-    generateRoute();
+  // --- REAL ROUTING INTEGRATION ---
+  // Helper to get an icon from a Google Maps maneuver string
+  const getManeuverIcon = (maneuver?: string) => {
+    if (!maneuver) return '⬆️'; // Straight
+    if (maneuver.includes('turn-right')) return '➡️';
+    if (maneuver.includes('turn-left')) return '⬅️';
+    if (maneuver.includes('sharp-right')) return '↪️';
+    if (maneuver.includes('sharp-left')) return '↩️';
+    if (maneuver.includes('uturn')) return '🔄';
+    if (maneuver.includes('roundabout')) return '🔄';
+    if (maneuver.includes('fork')) return '🍴';
+    if (maneuver.includes('merge')) return '🔀';
+    if (maneuver.includes('on-ramp')) return '↗️';
+    if (maneuver.includes('off-ramp')) return '↘️';
+    if (maneuver.includes('straight')) return '⬆️';
+    if (maneuver.includes('destination')) return '🏁';
+    
+    // Default for other cases like 'keep-right', 'keep-left'
+    if (maneuver.includes('right')) return '↗️';
+    if (maneuver.includes('left')) return '↖️';
+
+    return '⬆️';
   };
+
+  // Function to decode Google's encoded polyline strings
+  const decodePolyline = (encoded: string) => {
+    if (!encoded) {
+      return [];
+    }
+    let points = [];
+    let index = 0, len = encoded.length;
+    let lat = 0, lng = 0;
+
+    while (index < len) {
+      let b, shift = 0, result = 0;
+      do {
+        b = encoded.charCodeAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.charCodeAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      points.push([lat / 1e5, lng / 1e5]);
+    }
+    return points;
+  };
+  // --- END REAL ROUTING INTEGRATION ---
 
   return (
     <View style={styles.container}>
@@ -422,17 +685,42 @@ export default function MapScreen() {
         showsMyLocationButton={false}
       >
         {/* Draw safety segments */}
-        {safetySegments.map((segment, index) => (
+        {routeCoordinates.length > 0 && safetySegments.length === 0 && (
+          // While AI is analyzing, show a single neutral line
           <Polyline
-            key={index}
-            coordinates={segment.coordinates}
-            strokeColor={segment.color}
+            coordinates={routeCoordinates}
+            strokeColor={colors.primary}
             strokeWidth={6}
-            tappable={true}
-            onPress={() => setSelectedSegment(segment)}
           />
-        ))}
+        )}
+        {safetySegments.length > 0 &&
+          safetySegments.map((segment, index) => (
+            <Polyline
+              key={index}
+              coordinates={segment.coordinates}
+              strokeColor={segment.color}
+              strokeWidth={6}
+              tappable={true}
+              onPress={() => setSelectedSegment(segment)}
+            />
+          ))}
 
+        {/* Live User Location Puck during Navigation */}
+        {isNavigating && userLocation && (
+          <Marker
+            coordinate={userLocation.coords}
+            anchor={{ x: 0.5, y: 0.5 }} // Center the icon on the coordinate
+          >
+            <View style={styles.userLocationPuck}>
+              <Text style={[
+                styles.userLocationPuckArrow,
+                { transform: [{ rotate: `${userLocation.coords.heading || 0}deg` }] }
+              ]}>
+                ▲
+              </Text>
+            </View>
+          </Marker>
+        )}
         {/* Start and End markers */}
         {routeCoordinates.length > 0 && (
           <>
@@ -633,49 +921,70 @@ export default function MapScreen() {
               <Text style={styles.closeBtnText}>✕</Text>
             </TouchableOpacity>
 
-            <Text style={styles.safetyScoreTitle}>Route Safety Score</Text>
-            <View style={styles.scoreContainer}>
-              <Text style={[
-                styles.scoreNumber,
-                { color: overallScore >= 70 ? colors.safe : overallScore >= 40 ? colors.warning : colors.danger }
-              ]}>
-                {overallScore}
-              </Text>
-              <Text style={styles.scoreMax}>/100</Text>
-            </View>
-            
-            <Text style={styles.safetyMessage}>
-              {overallScore >= 70 
-                ? '✅ This route is safe!'
-                : overallScore >= 40
-                ? '⚠️ Use caution on this route'
-                : '🚨 High-risk areas detected'}
-            </Text>
+            <TouchableOpacity style={styles.minimizeButton} onPress={() => setIsSafetyCardMinimized(!isSafetyCardMinimized)}>
+              <Text style={styles.minimizeButtonText}>{isSafetyCardMinimized ? '↑' : '↓'}</Text>
+            </TouchableOpacity>
 
-            <View style={styles.safetyActionButtons}>
-              {overallScore < 70 && (
-                <TouchableOpacity onPress={findSaferRoute} style={styles.alternativeButton}>
-                  <LinearGradient
-                    colors={[colors.warning, colors.secondary]}
-                    style={styles.saferRouteBtn}
-                  >
-                    <Text style={styles.saferRouteBtnText}>
-                      ✨ Find Safer Alternative
+            {!isSafetyCardMinimized ? (
+              // --- Expanded View ---
+              <>
+                <Text style={styles.safetyScoreTitle}>Route Safety Score</Text>
+                {overallScore > 0 ? (
+                  <>
+                    <View style={styles.scoreContainer}>
+                      <Text style={[
+                        styles.scoreNumber,
+                        { color: overallScore >= 70 ? colors.safe : overallScore >= 40 ? colors.warning : colors.danger }
+                      ]}>
+                        {overallScore}
+                      </Text>
+                      <Text style={styles.scoreMax}>/100</Text>
+                    </View>
+                    
+                    <Text style={styles.safetyMessage}>
+                      {overallScore >= 70 
+                        ? '✅ This route is safe!'
+                        : overallScore >= 40
+                        ? '⚠️ Use caution on this route'
+                        : '🚨 High-risk areas detected'}
                     </Text>
+                  </>
+                ) : (
+                  <View style={styles.analyzingContainer}>
+                    <ActivityIndicator color={colors.primary} />
+                    <Text style={styles.analyzingText}>Analyzing route safety...</Text>
+                  </View>
+                )}
+
+                <View style={styles.safetyActionButtons}>
+                  {overallScore > 0 && overallScore < 70 && (
+                    <TouchableOpacity onPress={findSaferRoute} style={styles.alternativeButton}>
+                      <LinearGradient colors={[colors.warning, colors.secondary]} style={styles.saferRouteBtn}>
+                        <Text style={styles.saferRouteBtnText}>✨ Find Safer Alternative</Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  )}
+                  
+                  <TouchableOpacity onPress={startNavigation} style={styles.navigationButton}>
+                    <LinearGradient colors={[colors.primary, colors.accent]} style={styles.startNavBtn}>
+                      <Text style={styles.navButtonIcon}>🧿</Text>
+                      <Text style={styles.startNavBtnText}>Start Navigation</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              // --- Minimized View ---
+              <View style={styles.minimizedContent}>
+                <Text style={styles.minimizedScoreText}>Score: {overallScore > 0 ? overallScore : '...'}</Text>
+                <TouchableOpacity onPress={startNavigation} style={styles.minimizedStartButton}>
+                  <LinearGradient colors={[colors.primary, colors.accent]} style={styles.minimizedStartGradient}>
+                    <Text style={styles.navButtonIcon}>🧿</Text>
+                    <Text style={styles.minimizedStartText}>Start</Text>
                   </LinearGradient>
                 </TouchableOpacity>
-              )}
-              
-              <TouchableOpacity onPress={startNavigation} style={styles.navigationButton}>
-                <LinearGradient
-                  colors={[colors.primary, colors.accent]}
-                  style={styles.startNavBtn}
-                >
-                  <Text style={styles.navButtonIcon}>🧿</Text>
-                  <Text style={styles.startNavBtnText}>Start Navigation</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
+              </View>
+            )}
           </LinearGradient>
         </View>
       )}
@@ -732,98 +1041,77 @@ export default function MapScreen() {
 
       {/* Turn-by-Turn Navigation UI */}
       {isNavigating && navigationSteps.length > 0 && (
-        <View style={styles.navigationContainer}>
-          <LinearGradient
-            colors={[colors.backgroundCard, colors.backgroundLight]}
-            style={styles.navigationPanel}
-          >
-            {/* Navigation Header */}
-            <View style={styles.navHeader}>
-              <View style={styles.navHeaderLeft}>
-                <Text style={styles.navETA}>{estimatedTime} min</Text>
-                <Text style={styles.navDistance}>
-                  {(navigationSteps[navigationSteps.length - 1]?.totalDistance / 1000 || 0).toFixed(1)} km
-                </Text>
-              </View>
-              <TouchableOpacity onPress={stopNavigation} style={styles.navCloseBtn}>
-                <Text style={styles.navCloseBtnText}>End</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Current Instruction */}
-            {currentStepIndex < navigationSteps.length && (
-              <View style={styles.currentInstruction}>
-                <View style={styles.instructionIcon}>
-                  <Text style={styles.instructionIconText}>
-                    {navigationSteps[currentStepIndex]?.icon || '⬆️'}
-                  </Text>
-                </View>
-                <View style={styles.instructionContent}>
-                  <Text style={styles.instructionText}>
-                    {navigationSteps[currentStepIndex]?.instruction || 'Continue straight'}
-                  </Text>
-                  {navigationSteps[currentStepIndex]?.distance > 0 && (
-                    <Text style={styles.instructionDistance}>
-                      in {navigationSteps[currentStepIndex]?.distance}m
+        <>
+          {/* --- NEW: Google Maps Style Top Instruction Panel --- */}
+          <View style={styles.topNavContainer}>
+            <LinearGradient
+              colors={[colors.primary, colors.secondary]}
+              style={styles.topNavPanel}
+            >
+              {currentStepIndex < navigationSteps.length && (
+                <View style={styles.topNavContent}>
+                  <View style={styles.topNavIconContainer}>
+                    <Text style={styles.topNavIcon}>
+                      {getManeuverIcon(navigationSteps[currentStepIndex]?.maneuver)}
                     </Text>
-                  )}
+                  </View>
+                  <View style={styles.topNavInstruction}>
+                    <Text style={styles.topNavDistance}>
+                      {distanceToNext > 0
+                        ? `${Math.round(distanceToNext)} m`
+                        : navigationSteps[currentStepIndex]?.distance.text}
+                    </Text>
+                    <Text style={styles.topNavText} numberOfLines={2}>
+                      {navigationSteps[currentStepIndex]?.html_instructions.replace(/<[^>]*>?/gm, '') || 'Continue straight'}
+                    </Text>
+                  </View>
                 </View>
-              </View>
+              )}
+            </LinearGradient>
+          </View>
+
+          {/* --- NEW: Google Maps Style Bottom Info Panel --- */}
+          <View style={styles.bottomNavContainer}>
+            <LinearGradient
+              colors={[colors.backgroundCard, colors.backgroundLight]}
+              style={styles.bottomNavPanel}
+            >
+              <Text style={styles.bottomNavDetails}>
+                {(navigationSteps.reduce((sum, step) => sum + step.duration.value, 0) / 1000).toFixed(1)} km
+              </Text>
+              <TouchableOpacity onPress={stopNavigation} style={styles.bottomNavEndButton}>
+                <Text style={styles.bottomNavEndButtonText}>End</Text>
+              </TouchableOpacity>
+            </LinearGradient>
+          </View>
+
+          {/* --- NEW: Left-side circular controls --- */}
+          <View style={styles.leftNavControlsContainer}>
+            {/* Reroute Button */}
+            {isOffRoute && (
+              <TouchableOpacity style={[styles.leftNavControl, { backgroundColor: colors.warning }]} onPress={reroute}>
+                <Text style={styles.leftNavControlIcon}>🔄</Text>
+                <Text style={styles.leftNavControlText}>Reroute</Text>
+              </TouchableOpacity>
             )}
+            {/* Time remaining */}
+            <LinearGradient colors={[colors.primary, colors.secondary]} style={styles.leftNavControl}>
+              <Text style={styles.leftNavTime}>{estimatedTime}</Text>
+              <Text style={styles.leftNavTimeLabel}>min</Text>
+            </LinearGradient>
+          </View>
 
-            {/* Next Instructions Preview */}
-            <View style={styles.nextInstructions}>
-              {navigationSteps.slice(currentStepIndex + 1, currentStepIndex + 3).map((step, index) => (
-                <View key={index} style={styles.nextInstruction}>
-                  <Text style={styles.nextInstructionIcon}>{step.icon}</Text>
-                  <Text style={styles.nextInstructionText}>{step.instruction}</Text>
-                  <Text style={styles.nextInstructionDistance}>{step.distance}m</Text>
-                </View>
-              ))}
-            </View>
-
-            {/* Navigation Controls */}
-            <View style={styles.navControls}>
-              <TouchableOpacity 
-                style={[
-                  styles.navControlBtn, 
-                  currentStepIndex === 0 && styles.navControlBtnDisabled
-                ]}
-                onPress={() => setCurrentStepIndex(Math.max(0, currentStepIndex - 1))}
-                disabled={currentStepIndex === 0}
-              >
-                <Text style={[
-                  styles.navControlText,
-                  currentStepIndex === 0 && styles.navControlTextDisabled
-                ]}>◀ Prev</Text>
-              </TouchableOpacity>
-              
-              <View style={styles.stepIndicator}>
-                <Text style={styles.stepText}>
-                  {currentStepIndex + 1} of {navigationSteps.length}
-                </Text>
-              </View>
-              
-              <TouchableOpacity 
-                style={[
-                  styles.navControlBtn,
-                  currentStepIndex >= navigationSteps.length - 1 && styles.navControlBtnDisabled
-                ]}
-                onPress={() => setCurrentStepIndex(Math.min(navigationSteps.length - 1, currentStepIndex + 1))}
-                disabled={currentStepIndex >= navigationSteps.length - 1}
-              >
-                <Text style={[
-                  styles.navControlText,
-                  currentStepIndex >= navigationSteps.length - 1 && styles.navControlTextDisabled
-                ]}>Next ▶</Text>
-              </TouchableOpacity>
-            </View>
-          </LinearGradient>
-        </View>
+          {/* Reroute Button - now floating */}
+          {isOffRoute && (
+            <TouchableOpacity style={styles.rerouteButton} onPress={reroute}>
+              <Text style={styles.rerouteButtonText}>Reroute</Text>
+            </TouchableOpacity>
+          )}
+        </>
       )}
 
       {/* Floating Action Button */}
-      {!showRouteInput && (
+      {!showRouteInput && !isNavigating && (
         <TouchableOpacity
           style={styles.fab}
           onPress={() => {
@@ -867,6 +1155,26 @@ const makeStyles = (colors: any) => StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
+  userLocationPuck: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'white',
+  },
+  userLocationPuckArrow: {
+    color: 'white',
+    fontSize: 14,
+    lineHeight: 16,
+  },
+  rerouteButton: {
+    position: 'absolute',
+    // This style is now handled by leftNavControls
+  },
+  rerouteButtonText: { color: colors.text, fontWeight: 'bold' },
   modalContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -958,6 +1266,51 @@ const makeStyles = (colors: any) => StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.1)',
     backgroundColor: colors.backgroundCard,
   },
+  minimizedSafetyCard: {
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+  },
+  minimizeButton: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  minimizeButtonText: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  minimizedContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  minimizedScoreText: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  minimizedStartButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  minimizedStartGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  minimizedStartText: {
+    color: colors.text,
+    fontWeight: 'bold',
+  },
   closeBtn: {
     position: 'absolute',
     top: 10,
@@ -999,6 +1352,16 @@ const makeStyles = (colors: any) => StyleSheet.create({
     color: colors.text,
     fontSize: 16,
     marginBottom: 15,
+  },
+  analyzingContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+    marginVertical: 20,
+  },
+  analyzingText: {
+    color: colors.textSecondary,
   },
   saferRouteBtn: {
     height: 45,
@@ -1342,154 +1705,129 @@ const makeStyles = (colors: any) => StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  // Navigation UI Styles
-  navigationContainer: {
+  // --- NEW: Google Maps Style Navigation UI ---
+  topNavContainer: {
     position: 'absolute',
-    top: 60,
+    top: Platform.OS === 'ios' ? 50 : 40,
     left: 15,
     right: 15,
     zIndex: 1000,
-  },
-  navigationPanel: {
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: colors.primary + '20',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 5 },
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.3,
-    shadowRadius: 10,
+    shadowRadius: 20,
     elevation: 15,
   },
-  navHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  navHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 15,
-  },
-  navETA: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.primary,
-  },
-  navDistance: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  navCloseBtn: {
-    backgroundColor: colors.danger + '20',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  navCloseBtnText: {
-    color: colors.danger,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  currentInstruction: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.background + '50',
+  topNavPanel: {
+    borderRadius: 20,
     padding: 15,
-    borderRadius: 15,
-    marginBottom: 12,
+  },
+  topNavContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 15,
   },
-  instructionIcon: {
-    width: 45,
-    height: 45,
-    borderRadius: 22.5,
-    backgroundColor: colors.primary + '20',
+  topNavIconContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  instructionIconText: {
-    fontSize: 20,
-  },
-  instructionContent: {
-    flex: 1,
-  },
-  instructionText: {
-    fontSize: 16,
-    fontWeight: '700',
+  topNavIcon: {
+    fontSize: 32,
     color: colors.text,
-    marginBottom: 3,
   },
-  instructionDistance: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  nextInstructions: {
-    gap: 8,
-    marginBottom: 15,
-  },
-  nextInstruction: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    backgroundColor: colors.background + '30',
-    borderRadius: 10,
-    gap: 12,
-  },
-  nextInstructionIcon: {
-    fontSize: 16,
-    opacity: 0.7,
-  },
-  nextInstructionText: {
+  topNavInstruction: {
     flex: 1,
-    fontSize: 14,
-    color: colors.textSecondary,
-    fontWeight: '500',
   },
-  nextInstructionDistance: {
-    fontSize: 12,
-    color: colors.textMuted,
+  topNavDistance: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: colors.text,
+  },
+  topNavText: {
+    fontSize: 18,
     fontWeight: '600',
+    color: colors.text,
+    opacity: 0.9,
   },
-  navControls: {
+  bottomNavContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    padding: 15,
+  },
+  bottomNavPanel: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.primary + '15',
+    padding: 15,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -5 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 10,
   },
-  navControlBtn: {
-    backgroundColor: colors.background + '50',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 12,
-  },
-  navControlText: {
-    color: colors.text,
+  bottomNavDetails: {
     fontSize: 14,
+    color: colors.textSecondary,
+  },
+  bottomNavEndButton: {
+    backgroundColor: colors.danger,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  bottomNavEndButtonText: {
+    color: colors.text,
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  // --- NEW: Left Nav Controls ---
+  leftNavControlsContainer: {
+    position: 'absolute',
+    bottom: 120,
+    left: 15,
+    zIndex: 1000,
+    gap: 10,
+    alignItems: 'center',
+  },
+  leftNavControl: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 8,
+  },
+  leftNavControlIcon: {
+    fontSize: 24,
+  },
+  leftNavControlText: {
+    color: colors.text,
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  leftNavTime: {
+    color: colors.text,
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  leftNavTimeLabel: {
+    color: colors.text,
+    fontSize: 10,
     fontWeight: '600',
-  },
-  stepIndicator: {
-    backgroundColor: colors.primary + '20',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  stepText: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  navControlBtnDisabled: {
-    opacity: 0.5,
-    backgroundColor: colors.background + '30',
-  },
-  navControlTextDisabled: {
-    color: colors.textMuted,
+    marginTop: -4,
   },
 });

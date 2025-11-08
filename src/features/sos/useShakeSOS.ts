@@ -1,153 +1,52 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { Accelerometer } from 'expo-sensors';
-import { Subscription } from 'expo-sensors/build/DeviceSensor';
-import { Alert, Linking } from 'react-native';
-import * as Location from 'expo-location';
-import { useAuth } from '../../context/AuthContext';
-import { fetchContacts } from '../../services/contactsService';
 
-// Define the EmergencyContact type here, as it's used by fetchContacts
-interface EmergencyContact {
-  id: number;
-  name: string;
-  phone: string;
-}
-
-const SHAKE_THRESHOLD = 1.8; // How hard the shake should be
-const SHAKE_COUNT = 3; // How many shakes are needed
-const SHAKE_TIMEFRAME = 1000; // Milliseconds timeframe for the shakes
+const SHAKE_THRESHOLD = 1.5; // Adjust this value based on testing
+const SHAKE_TIMEOUT = 500; // Time in ms to detect shakes
+const SHAKE_COUNT = 3; // Number of shakes required
 
 /**
- * Custom hook to detect a shake gesture and trigger an SOS action.
- * @param enabled - Boolean to enable or disable the shake detection.
+ * A custom hook to detect a "shake" gesture using the device's accelerometer.
+ * When the shake gesture is detected and the feature is enabled, it invokes a callback.
+ *
+ * @param enabled - A boolean to enable or disable the shake detection.
+ * @param onShake - The callback function to execute when a shake is detected.
  */
-export const useShakeSOS = (enabled: boolean) => {
-  const { user } = useAuth();
-  const subscription = useRef<Subscription | null>(null);
-  const [shakeData, setShakeData] = useState<{ count: number; lastShake: number }>({
-    count: 0,
-    lastShake: 0,
-  });
-
+export const useShakeSOS = (enabled: boolean, onShake: () => void) => {
   useEffect(() => {
-    if (enabled) {
-      _subscribe();
-    } else {
-      _unsubscribe();
+    if (!enabled) {
+      // If not enabled, ensure no listener is active.
+      Accelerometer.removeAllListeners();
+      return;
     }
 
-    // Cleanup on unmount
-    return () => _unsubscribe();
-  }, [enabled]);
+    let shakeCount = 0;
+    let lastShakeTimestamp = 0;
 
-  const _subscribe = () => {
-    // Set update interval for the accelerometer
-    Accelerometer.setUpdateInterval(100); // 10 times per second
+    const subscription = Accelerometer.addListener(({ x, y, z }) => {
+      // Calculate the magnitude of the acceleration vector.
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
 
-    const sub = Accelerometer.addListener(accelerometerData => {
-      const { x, y, z } = accelerometerData;
-      const totalForce = Math.sqrt(x ** 2 + y ** 2 + z ** 2);
+      if (magnitude > SHAKE_THRESHOLD) {
+        const now = Date.now();
+        
+        // Reset if shakes are too far apart.
+        if (now - lastShakeTimestamp > SHAKE_TIMEOUT) {
+          shakeCount = 1;
+        } else {
+          shakeCount++;
+        }
 
-      if (totalForce > SHAKE_THRESHOLD) {
-        setShakeData(currentShakeData => {
-          const now = Date.now();
-          const { count, lastShake } = currentShakeData;
-          
-          // If last shake was too long ago, reset the counter
-          if (now - lastShake > SHAKE_TIMEFRAME) {
-            return { count: 1, lastShake: now };
-          }
-          
-          const newCount = count + 1;
-          
-          // If shake count is met, trigger SOS and reset
-          if (newCount >= SHAKE_COUNT) {
-            triggerSOS();
-            return { count: 0, lastShake: 0 };
-          }
-          
-          return { count: newCount, lastShake: now };
-        });
+        lastShakeTimestamp = now;
+
+        if (shakeCount >= SHAKE_COUNT) {
+          onShake(); // Trigger the callback.
+          shakeCount = 0; // Reset after triggering.
+        }
       }
     });
-    subscription.current = sub;
-  };
 
-  const _unsubscribe = () => {
-    subscription.current?.remove();
-    subscription.current = null;
-  };
-
-  const triggerSOS = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location permission is required to send SOS.');
-        return;
-      }
-
-      // --- LIVE LOCATION UPDATE ---
-      // Always fetch a fresh, high-accuracy location when SOS is triggered.
-      // This ensures the most up-to-date position is sent.
-      console.log("Fetching live location for SOS...");
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-
-      const { latitude, longitude } = location.coords;
-      const message = `SOS! I need help. My current location is: https://maps.google.com/?q=${latitude},${longitude}`;
-
-      if (!user) {
-        // Fallback for users who are not logged in
-        const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
-        await Linking.openURL(whatsappUrl);
-        return;
-      }
-
-      // Fetch emergency contacts from the database
-      const contacts = await fetchContacts(user.id);
-      if (contacts.length === 0) {
-        Alert.alert(
-          'No Emergency Contacts',
-          'Please add emergency contacts in your profile to use the SOS feature.',
-          [{ text: 'Open Profile', onPress: () => { /* TODO: Navigate to profile */ } }, { text: 'Cancel' }]
-        );
-        return;
-      }
-
-      // Open WhatsApp for each contact
-      for (const contact of contacts) {
-        // --- RELIABILITY FIX ---
-        // Sanitize the phone number: remove all non-digit characters.
-        // This is crucial for the WhatsApp deep link to work correctly.
-        let sanitizedPhone = contact.phone.replace(/\D/g, '');
-
-        // --- NEW RELIABILITY FIX ---
-        // WhatsApp requires a country code. Let's assume '91' for India if the number is 10 digits.
-        // Adjust the country code and length check as needed for your target audience.
-        if (sanitizedPhone.length === 10) {
-          sanitizedPhone = `91${sanitizedPhone}`;
-        }
-        // --- END NEW FIX ---
-
-        // --- FINAL RELIABILITY FIX ---
-        // Use the more reliable 'https://wa.me/' link format.
-        // This is the official and more robust way to deep link into WhatsApp.
-        const whatsappUrl = `https://wa.me/${sanitizedPhone}?text=${encodeURIComponent(message)}`;
-        
-        const canOpen = await Linking.canOpenURL(whatsappUrl);
-
-        if (canOpen) {
-          await Linking.openURL(whatsappUrl);
-        } else {
-          // This provides a more specific error if WhatsApp isn't installed or the link is invalid.
-          Alert.alert('Error', `Could not open WhatsApp for contact ${contact.name}. Please ensure WhatsApp is installed and the phone number is correct.`);
-        }
-        // Add a small delay between opening each chat
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    } catch (error) {
-      Alert.alert('SOS Failed', `An unexpected error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  };
+    // Cleanup function to remove the listener when the component unmounts or `enabled` changes.
+    return () => subscription?.remove();
+  }, [enabled, onShake]);
 };

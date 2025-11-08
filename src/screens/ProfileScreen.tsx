@@ -216,9 +216,9 @@ export default function ProfileScreen() {
               <View style={styles.divider} />
 
               <View style={styles.prefRow}>
-                <View>
+                <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={styles.prefTitle}>Shake to send SOS</Text>
-                  <Text style={styles.prefSubtitle}>Shake the phone hard 3 times within 1s to open WhatsApp with your location</Text>
+                  <Text style={styles.prefSubtitle}>Shake the phone to trigger an SOS alert</Text>
                 </View>
                 <Switch
                   value={sosEnabled}

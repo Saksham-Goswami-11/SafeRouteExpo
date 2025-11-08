@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from '../services/firebaseClient';
 import { getProfile, Profile, upsertProfile } from '../services/profileService';
-import { upsertUser } from '../services/userService';
 import { User } from '../services/sqlite';
 
 export type AuthContextType = {

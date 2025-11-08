@@ -1,7 +1,8 @@
 import * as Location from 'expo-location';
+import { GNEWS_API_KEY } from '@env';
 
-// TODO: Replace with the actual News API key provided by the user.
-const NEWS_API_KEY = '60706cdeaac74dca869332a63aaec31a';
+// Securely access the GNews API key from the .env file
+const NEWS_API_KEY = GNEWS_API_KEY;
 const NEWS_API_ENDPOINT = 'https://newsapi.org/v2/everything';
 
 interface NewsArticle {
@@ -68,7 +69,7 @@ function deg2rad(deg: number): number {
  * @returns A promise that resolves to an array of news articles.
  */
 async function fetchNewsForCity(city: string): Promise<NewsArticle[]> {
-  if (NEWS_API_KEY === '60706cdeaac74dca869332a63aaec31a') {
+  if (!NEWS_API_KEY || NEWS_API_KEY === 'YOUR_GNEWS_API_KEY_HERE') {
     console.warn('News API key is not set. Using mock data.');
     // Return mock data for now
     return [

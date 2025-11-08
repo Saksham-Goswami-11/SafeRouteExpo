@@ -7,12 +7,14 @@ import EditProfileScreen from '../screens/profile/EditProfileScreen';
 import EmergencyContactsScreen from '../screens/profile/EmergencyContactsScreen';
 import SavedAddressesScreen from '../screens/profile/SavedAddressesScreen';
 
+// ProfileStack ke andar ki screens aur unke params
 export type ProfileStackParamList = {
   ProfileHome: undefined;
   Login: undefined;
   Signup: undefined;
   EditProfile: undefined;
   EmergencyContacts: undefined;
+  // SavedAddresses screen ko yahan define karein
   SavedAddresses: undefined;
 };
 

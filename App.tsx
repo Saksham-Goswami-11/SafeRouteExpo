@@ -1,3 +1,4 @@
+import { NavigatorScreenParams } from '@react-navigation/native';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
@@ -16,12 +17,32 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { createStackNavigator } from '@react-navigation/stack';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+// --- 1. YAHAN SE TYPE IMPORT KAREIN ---
+// Ab types alag file se aa rahe hain
+import { ProfileStackParamList } from './src/navigation/ProfileStack';
+
+// Tab Navigator ke liye types
+export type RootTabParamList = {
+  Home: undefined;
+  Navigate: undefined;
+  Safety: undefined;
+  Profile: NavigatorScreenParams<ProfileStackParamList>;
+};
+
+// Main App Stack Navigator ke liye types
+export type RootStackParamList = {
+  Main: NavigatorScreenParams<RootTabParamList>;
+  NearbyPlaces: { type: 'hospital' | 'police' };
+};
 
 // Screens import
 import MapScreen from './src/screens/MapScreen';
 import SafetyScreen from './src/screens/SafetyScreen';
 import ProfileStack from './src/navigation/ProfileStack';
+import NearbyPlacesScreen from './src/screens/NearbyPlacesScreen';
 import { AuthProvider } from './src/context/AuthContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import * as Location from 'expo-location';
@@ -29,6 +50,7 @@ import { SOSProvider, useSOS } from './src/context/SOSContext';
 import { useShakeSOS } from './src/features/sos/useShakeSOS';
 import { initDB } from './src/services/sqlite';
 import { runStartupCleanup } from './src/utils/databaseCleanup';
+import NewsAnalyzerTester from './src/components/NewsAnalyzerTester';
 
 // Helper to lighten/darken hex colors (percent: -100..100)
 function shade(hex: string, percent: number) {
@@ -46,19 +68,31 @@ function shade(hex: string, percent: number) {
   return `#${out.toString(16).padStart(6, '0')}`;
 }
 
+/**
+ * A dedicated component to handle the Shake to SOS feature.
+ * This component will re-render when the SOS context changes,
+ * correctly enabling or disabling the shake listener.
+ */
+function ShakeSOSManager() {
+  const { enabled } = useSOS();
+  useShakeSOS(enabled);
+  return null; // This component does not render anything
+}
+
 const { width, height } = Dimensions.get('window');
 
-// Theme colors come from ThemeProvider
 
-const Tab = createBottomTabNavigator();
+// Navigators
+const Tab = createBottomTabNavigator<RootTabParamList>();
+const Stack = createStackNavigator<RootStackParamList>();
 
 // Home Screen Component
+// ... (HomeScreen component remains unchanged)
 function HomeScreen({ navigation }: any) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
-  const [currentLocation, setCurrentLocation] = useState<any>(null);
 
   useEffect(() => {
     Animated.parallel([
@@ -74,33 +108,23 @@ function HomeScreen({ navigation }: any) {
         useNativeDriver: true,
       }),
     ]).start();
-    
-    // Get current location for share feature
-    getCurrentLocation();
   }, []);
 
-  const getCurrentLocation = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const location = await Location.getCurrentPositionAsync({});
-        setCurrentLocation(location.coords);
-      }
-    } catch (error) {
-      console.log('Location error:', error);
-    }
-  };
-
   const shareLocation = async () => {
-    if (!currentLocation) {
-      Alert.alert('Location Required', 'Please enable location services to share your location');
-      return;
-    }
-
-    const message = `Hi! I'm sharing my current location with you: https://maps.google.com/?q=${currentLocation.latitude},${currentLocation.longitude}`;
-    const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
-    
     try {
+      console.log("Fetching live location for sharing...");
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required to share your location.');
+        return;
+      }
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      const { latitude, longitude } = location.coords;
+      const message = `Hi! I'm sharing my current location with you: https://maps.google.com/?q=${latitude},${longitude}`;
+      const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
+      
       const canOpen = await Linking.canOpenURL(whatsappUrl);
       if (canOpen) {
         await Linking.openURL(whatsappUrl);
@@ -110,7 +134,7 @@ function HomeScreen({ navigation }: any) {
         await Linking.openURL(webUrl);
       }
     } catch (error) {
-      Alert.alert('Error', 'Unable to open WhatsApp. Please ensure it\'s installed.');
+      Alert.alert('Error', 'Could not share location. Please ensure WhatsApp is installed.');
     }
   };
 
@@ -203,22 +227,23 @@ function HomeScreen({ navigation }: any) {
               <Text style={styles.routeArrow}>→</Text>
             </LinearGradient>
           </TouchableOpacity>
+
+          {/* News Analyzer Tester */}
+          <NewsAnalyzerTester />
+          
         </Animated.View>
       </ScrollView>
     </LinearGradient>
   );
 }
 
-
-
-
-// Main App Component
-function InnerApp() {
+/**
+ * Tab Navigator component
+ */
+function MainTabNavigator() {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
-  const { enabled } = useSOS();
-  useShakeSOS(enabled);
-  useEffect(() => {
+    useEffect(() => {
     StatusBar.setBarStyle('light-content');
     if (Platform.OS === 'android') {
       StatusBar.setBackgroundColor('transparent');
@@ -242,8 +267,6 @@ function InnerApp() {
   }, []);
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
         <Tab.Navigator
           screenOptions={{
             headerShown: false,
@@ -263,6 +286,7 @@ function InnerApp() {
             },
           }}
         >
+          {/* Aapke purane icons waapis aa gaye hain */}
           <Tab.Screen
             name="Home"
             component={HomeScreen}
@@ -300,14 +324,29 @@ function InnerApp() {
           />
           <Tab.Screen
             name="Profile"
-            component={ProfileStack}
+            component={ProfileStack} // ProfileStack ek poora navigator hai
             options={{
               tabBarIcon: ({ color }) => (
                 <Text style={{ fontSize: 24, color }}>👤</Text>
               ),
             }}
+            // Yahan batana zaroori hai ki 'Profile' screen par click karne par
+            // by default 'ProfileHome' screen khulni chahiye.
+            initialParams={{ screen: 'ProfileHome' }}
           />
         </Tab.Navigator>
+  );
+}
+
+// Main App Component
+function InnerApp() {
+  return (
+    <SafeAreaProvider>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Main" component={MainTabNavigator} />
+          <Stack.Screen name="NearbyPlaces" component={NearbyPlacesScreen} />
+        </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>
   );
@@ -318,6 +357,7 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <SOSProvider>
+          <ShakeSOSManager />
           <InnerApp />
         </SOSProvider>
       </AuthProvider>
@@ -325,6 +365,7 @@ export default function App() {
   );
 }
 
+// ... aapke poore styles ...
 const makeStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,

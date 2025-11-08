@@ -15,6 +15,17 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useSOS } from '../context/SOSContext';
 import * as Location from 'expo-location';
+
+// --- 1. YAHAN BADLAAV HAI ---
+import { useNavigation, CompositeNavigationProp } from '@react-navigation/native'; 
+import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+// Ab 'App.tsx' se RootTabParamList import karein
+import { RootStackParamList, RootTabParamList } from '../../App';
+
+// --- 1. LIVE LOCATION HOOK IMPORT ---
+import { useLiveLocationSharing } from '../features/location/useLiveLocationSharing';
+// --- BADLAAV KHATAM ---
+
 const { width, height } = Dimensions.get('window');
 
 interface SafetyTip {
@@ -70,6 +81,15 @@ const safetyTips: SafetyTip[] = [
   }
 ];
 
+// --- 2. YAHAN BADLAAV HAI ---
+// Navigation prop ke liye type define karna
+type SafetyScreenNavigationProp = CompositeNavigationProp<
+  BottomTabNavigationProp<RootTabParamList, 'Safety'>,
+  BottomTabNavigationProp<RootStackParamList>
+>;
+// --- BADLAAV KHATAM ---
+
+
 export default function SafetyScreen() {
   const { colors } = useTheme();
   const { user } = useAuth();
@@ -77,6 +97,15 @@ export default function SafetyScreen() {
   const [currentLocation, setCurrentLocation] = useState<any>(null);
   const [areaRating, setAreaRating] = useState(85);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
+  // --- 2. LIVE LOCATION HOOK INITIALIZATION ---
+  const { isSharing, session, startSharing, stopSharing } = useLiveLocationSharing();
+  // --- BADLAAV KHATAM ---
+  
+  // --- 3. YAHAN BADLAAV HAI ---
+  // Navigation hook ka istemaal karna
+  const navigation = useNavigation<SafetyScreenNavigationProp>();
+  // --- BADLAAV KHATAM ---
   
   const styles = makeStyles(colors);
   useEffect(() => {
@@ -113,25 +142,29 @@ export default function SafetyScreen() {
   };
 
   const shareLocationWithContacts = async () => {
-    if (!currentLocation) {
-      Alert.alert('Location Required', 'Please enable location services to share your location');
-      return;
-    }
-
-    const message = `I'm sharing my current location with you for safety: https://maps.google.com/?q=${currentLocation.latitude},${currentLocation.longitude}`;
-    const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
-    
     try {
+      console.log("Fetching live location for sharing from Safety Screen...");
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required to share your location.');
+        return;
+      }
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      const { latitude, longitude } = location.coords;
+      const message = `I'm sharing my current location with you for safety: https://maps.google.com/?q=${latitude},${longitude}`;
+      const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
+
       const canOpen = await Linking.canOpenURL(whatsappUrl);
       if (canOpen) {
         await Linking.openURL(whatsappUrl);
       } else {
-        // Fallback to web WhatsApp
         const webUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
         await Linking.openURL(webUrl);
       }
     } catch (error) {
-      Alert.alert('Error', 'Unable to open WhatsApp. Please ensure it\'s installed.');
+      Alert.alert('Error', 'Could not share location. Please ensure WhatsApp is installed.');
     }
   };
 
@@ -212,6 +245,18 @@ export default function SafetyScreen() {
                 <Text style={styles.emergencyText}>Share Location</Text>
               </LinearGradient>
             </TouchableOpacity>
+
+            {/* --- 4. LIVE SHARE BUTTON --- */}
+            <TouchableOpacity style={styles.emergencyButton} onPress={handleLiveShare}>
+              <LinearGradient
+                colors={isSharing ? [colors.safe, '#16a34a'] : [colors.warning, '#ca8a04']}
+                style={styles.emergencyGradient}
+              >
+                <Text style={styles.emergencyIcon}>📡</Text>
+                <Text style={styles.emergencyText}>{isSharing ? 'Stop Live Share' : 'Share Live'}</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+            {/* --- BADLAAV KHATAM --- */}
           </View>
 
           {sosEnabled && (
@@ -281,7 +326,11 @@ export default function SafetyScreen() {
               <Text style={styles.resourceArrow}>›</Text>
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.resourceItem}>
+            {/* --- 4. YAHAN BUTTON KO LINK KIYA GAYA HAI --- */}
+            <TouchableOpacity 
+              style={styles.resourceItem}
+              onPress={() => navigation.navigate('NearbyPlaces', { type: 'hospital' })}
+            >
               <Text style={styles.resourceIcon}>🏥</Text>
               <View style={styles.resourceContent}>
                 <Text style={styles.resourceTitle}>Nearby Hospitals</Text>
@@ -290,7 +339,11 @@ export default function SafetyScreen() {
               <Text style={styles.resourceArrow}>›</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.resourceItem}>
+            {/* --- 5. YAHAN BUTTON KO LINK KIYA GAYA HAI --- */}
+            <TouchableOpacity 
+              style={styles.resourceItem}
+              onPress={() => navigation.navigate('NearbyPlaces', { type: 'police' })}
+            >
               <Text style={styles.resourceIcon}>👮</Text>
               <View style={styles.resourceContent}>
                 <Text style={styles.resourceTitle}>Police Stations</Text>
@@ -305,6 +358,7 @@ export default function SafetyScreen() {
   );
 }
 
+// ... aapke poore styles ...
 const makeStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,

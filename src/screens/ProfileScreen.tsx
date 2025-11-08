@@ -16,13 +16,22 @@ import * as FileSystem from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, CompositeNavigationProp } from '@react-navigation/native';
 import { useSOS } from '../context/SOSContext';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { RootTabParamList } from '../../App';
+import { ProfileStackParamList } from '../navigation/ProfileStack';
+
+type ProfileScreenNavigationProp = CompositeNavigationProp<
+  BottomTabNavigationProp<RootTabParamList, 'Profile'>,
+  StackNavigationProp<ProfileStackParamList>
+>;
 
 export default function ProfileScreen() {
   const { colors, darkMode, setDarkMode } = useTheme();
   const { user, profile, logout } = useAuth();
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation<ProfileScreenNavigationProp>();
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
   const { enabled: sosEnabled, setEnabled: setSosEnabled } = useSOS();
   const [profileImage, setProfileImage] = useState<string | null>(null);

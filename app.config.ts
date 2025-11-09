@@ -7,7 +7,7 @@ const defineConfig = (): ExpoConfig => ({
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
-  newArchEnabled: true,
+  newArchEnabled: false,
   splash: {
     image: './assets/splash-icon.png',
     resizeMode: 'contain',
@@ -15,6 +15,10 @@ const defineConfig = (): ExpoConfig => ({
   },
   ios: {
     supportsTablet: true,
+    infoPlist: {
+      NSMicrophoneUsageDescription: "This app uses the microphone to enable voice-activated SOS commands.",
+      NSSpeechRecognitionUsageDescription: "This app uses speech recognition to listen for the SOS activation phrase."
+    }
   },
   android: {
     adaptiveIcon: {

@@ -20,8 +20,7 @@ import { useNavigation, CompositeNavigationProp } from '@react-navigation/native
 import { useSOS } from '../context/SOSContext';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { RootTabParamList } from '../../App';
-import { ProfileStackParamList } from '../navigation/ProfileStack';
+import { ProfileStackParamList, RootTabParamList } from '../navigation/types';
 
 type ProfileScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<RootTabParamList, 'Profile'>,
@@ -33,7 +32,7 @@ export default function ProfileScreen() {
   const { user, profile, logout } = useAuth();
   const navigation = useNavigation<ProfileScreenNavigationProp>();
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
-  const { enabled: sosEnabled, setEnabled: setSosEnabled } = useSOS();
+  const { shakeEnabled, setShakeEnabled } = useSOS();
   const [profileImage, setProfileImage] = useState<string | null>(null);
 
   const onEditProfile = () => navigation.navigate('EditProfile');
@@ -126,12 +125,12 @@ export default function ProfileScreen() {
             <Text style={styles.sectionTitle}>You're not signed in</Text>
             <Text style={styles.prefSubtitle}>Log in or create an account to save addresses and manage contacts.</Text>
             <View style={styles.actionsRow}>
-              <TouchableOpacity style={styles.primaryBtn} onPress={() => navigation.navigate('Login')}>
+              <TouchableOpacity style={styles.primaryBtn} onPress={() => (navigation as any).navigate('Login')}>
                 <LinearGradient colors={[colors.primary, colors.secondary]} style={styles.primaryBtnGradient}>
                   <Text style={styles.primaryBtnText}>Log in</Text>
                 </LinearGradient>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.secondaryBtn} onPress={() => navigation.navigate('Signup')}>
+              <TouchableOpacity style={styles.secondaryBtn} onPress={() => (navigation as any).navigate('Signup')}>
                 <Text style={styles.secondaryBtnText}>Sign up</Text>
               </TouchableOpacity>
             </View>
@@ -221,9 +220,9 @@ export default function ProfileScreen() {
                   <Text style={styles.prefSubtitle}>Shake the phone to trigger an SOS alert</Text>
                 </View>
                 <Switch
-                  value={sosEnabled}
-                  onValueChange={setSosEnabled}
-                  thumbColor={sosEnabled ? colors.primary : '#ccc'}
+                  value={shakeEnabled}
+                  onValueChange={setShakeEnabled}
+                  thumbColor={shakeEnabled ? colors.primary : '#ccc'}
                   trackColor={{ true: 'rgba(99,102,241,0.4)', false: 'rgba(0,0,0,0.15)' }}
                 />
               </View>

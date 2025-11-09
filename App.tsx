@@ -76,7 +76,7 @@ function shade(hex: string, percent: number) {
 function ShakeSOSManager() {
   // Get the full context object to safely check for new properties.
   const sosContext = useSOS();
-  const enabled = sosContext?.enabled ?? false;
+  const enabled = sosContext?.shakeEnabled ?? false;
   const isConfirmingSOS = sosContext?.isConfirmingSOS ?? false;
   
   // This callback will trigger the SOS confirmation modal.
@@ -89,27 +89,36 @@ function ShakeSOSManager() {
   }, [enabled, isConfirmingSOS, sosContext]);
 
   // This safely calls useShakeSOS.
-  // If the hook is updated to accept a callback, it will work.
-  // If it's the old version, it will simply ignore the second argument, preventing a crash.
-  try {
-    useShakeSOS(enabled, handleShake);
-  } catch (e) {
-    console.error("Error in useShakeSOS. It might not be updated to accept a callback.", e);
-  }
+  useShakeSOS(enabled, handleShake);
 
   return null; // This component does not render anything
 }
 
-const { width, height } = Dimensions.get('window');
+/**
+ * A dedicated component to handle the Voice to SOS feature.
+ */
+// function VoiceSOSManager() {
+//   const sosContext = useSOS();
+//   const enabled = sosContext?.voiceEnabled ?? false;
+//   const isConfirmingSOS = sosContext?.isConfirmingSOS ?? false;
+//   const handleActivation = React.useCallback(() => {
+//     if (enabled && !isConfirmingSOS && typeof sosContext.startSOSConfirmation === 'function') {
+//       console.log('Voice activation detected! Starting SOS confirmation...');
+//       sosContext.startSOSConfirmation();
+//     }
+//   }, [enabled, isConfirmingSOS, sosContext]);
+//   // useVoiceSOS(enabled, handleActivation);
+//   return null; // This component does not render anything
+// }
 
+const { width, height } = Dimensions.get('window');
 
 // Navigators
 const Tab = createBottomTabNavigator<RootTabParamList>();
 const Stack = createStackNavigator<RootStackParamList>();
 
 // Home Screen Component
-// ... (HomeScreen component remains unchanged)
-function HomeScreen({ navigation }: any) {
+function HomeScreen({ navigation }: { navigation: any }) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -271,7 +280,8 @@ function HomeScreen({ navigation }: any) {
 function MainTabNavigator() {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
-    useEffect(() => {
+
+  useEffect(() => {
     StatusBar.setBarStyle('light-content');
     if (Platform.OS === 'android') {
       StatusBar.setBackgroundColor('transparent');
@@ -295,71 +305,70 @@ function MainTabNavigator() {
   }, []);
 
   return (
-        <Tab.Navigator
-          screenOptions={{
-            headerShown: false,
-            tabBarStyle: {
-              backgroundColor: colors.backgroundCard,
-              borderTopWidth: 0,
-              elevation: 0,
-              height: Platform.OS === 'ios' ? 90 : 70,
-              paddingBottom: Platform.OS === 'ios' ? 25 : 10,
-              paddingTop: 10,
-            },
-            tabBarActiveTintColor: colors.primary,
-            tabBarInactiveTintColor: '#64748B',
-            tabBarLabelStyle: {
-              fontSize: 12,
-              fontWeight: '600',
-            },
-          }}
-        >
-          {/* Aapke purane icons waapis aa gaye hain */}
-          <Tab.Screen
-            name="Home"
-            component={HomeScreen}
-            options={{
-              tabBarIcon: ({ color }) => (
-                <Text style={{ fontSize: 24, color }}>🏠</Text>
-              ),
-            }}
-          />
-          <Tab.Screen
-            name="Navigate"
-            component={MapScreen}
-            options={{
-              tabBarIcon: ({ focused }) => (
-                <View
-                  style={[
-                    styles.mainTabIcon,
-                    { backgroundColor: focused ? colors.primary : colors.backgroundCard },
-                  ]}
-                >
-                  <Text style={{ fontSize: 28 }}>🗺️</Text>
-                </View>
-              ),
-              tabBarLabel: 'Navigate',
-            }}
-          />
-          <Tab.Screen
-            name="Safety"
-            component={SafetyScreen}
-            options={{
-              tabBarIcon: ({ color }) => (
-                <Text style={{ fontSize: 24, color }}>🛡️</Text>
-              ),
-            }}
-          />
-          <Tab.Screen
-            name="Profile"
-            component={ProfileStack} // ProfileStack ek poora navigator hai
-            options={{
-              tabBarIcon: ({ color }) => (
-                <Text style={{ fontSize: 24, color }}>👤</Text>
-              ),
-            }}
-          />
-        </Tab.Navigator>
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: {
+          backgroundColor: colors.backgroundCard,
+          borderTopWidth: 0,
+          elevation: 0,
+          height: Platform.OS === 'ios' ? 90 : 70,
+          paddingBottom: Platform.OS === 'ios' ? 25 : 10,
+          paddingTop: 10,
+        },
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: '#64748B',
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '600',
+        },
+      }}
+    >
+      <Tab.Screen
+        name="Home"
+        component={HomeScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: 24, color }}>🏠</Text>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Navigate"
+        component={MapScreen}
+        options={{
+          tabBarIcon: ({ focused, color, size }) => (
+            <View
+              style={[
+                styles.mainTabIcon,
+                { backgroundColor: focused ? colors.primary : colors.backgroundCard },
+              ]}
+            >
+              <Text style={{ fontSize: 28, color: focused ? '#FFFFFF' : color }}>🗺️</Text>
+            </View>
+          ),
+          tabBarLabel: 'Navigate',
+        }}
+      />
+      <Tab.Screen
+        name="Safety"
+        component={SafetyScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: 24, color }}>🛡️</Text>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileStack}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: 24, color }}>👤</Text>
+          ),
+        }}
+      />
+    </Tab.Navigator>
   );
 }
 
@@ -401,15 +410,15 @@ function AppContent() {
       const canOpen = await Linking.canOpenURL(whatsappUrl);
       if (canOpen) {
         await Linking.openURL(whatsappUrl);
+        confirmSOS(); // Close modal after successfully opening WhatsApp
       } else {
         // Fallback for when WhatsApp is not installed
         const webUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
         await Linking.openURL(webUrl);
+        confirmSOS(); // Close modal after successfully opening web link
       }
     } catch (error) {
       Alert.alert('Error', 'Could not send location. Please ensure you have an internet connection.');
-    } finally {
-      confirmSOS(); // This will set isConfirmingSOS to false
     }
   };
 
@@ -427,6 +436,7 @@ export default function App() {
       <AuthProvider>
         <SOSProvider>
           <ShakeSOSManager />
+          {/* <VoiceSOSManager /> */}
           <AppContent />
         </SOSProvider>
       </AuthProvider>
@@ -437,7 +447,7 @@ export default function App() {
 // ... aapke poore styles ...
 const makeStyles = (colors: any) => StyleSheet.create({
   container: {
-    flex: 1,
+    flex: 1, 
   },
   centerContainer: {
     flex: 1,

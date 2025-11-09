@@ -13,19 +13,13 @@ import {
   Platform,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Callout } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
-// --- AI INTEGRATION: Import AI analyzer and config ---
-import {
-  aiSafetyAnalyzer,
-  calculateAIOverallSafetyScore,
-} from '../utils/aiSafetyAnalyzer';
-import { SafetySegment } from '../utils/safetyAnalysis'; // Keep type for compatibility
-import { DEVELOPMENT_MODE } from '../config/aiConfig';
-// --- END AI INTEGRATION ---
+import { SafetySegment } from '../utils/safetyAnalysis';
 import { useAuth } from '../context/AuthContext';
 import { fetchSavedAddresses, SavedAddress, addSavedAddress } from '../services/addressService';
+import { analyzeAllRoutes } from '../services/safetyAnalysis';
 
 // --- REAL ROUTING INTEGRATION ---
 // IMPORTANT: Add your Google Maps API Key here
@@ -233,120 +227,55 @@ export default function MapScreen() {
     return null;
   };
 
-  // Throttled route generation to prevent multiple concurrent calls
   const generateRoute = useCallback(async () => {
     if (!startLocation || !endLocation) {
       Alert.alert('Error', 'Please enter both start and end locations');
       return;
     }
 
-    // --- AI INTEGRATION: Use AI Analyzer ---
-    console.log('🤖 Using AI-powered safety analysis...');
+    console.log('🤖 Starting new safety analysis workflow...');
     setIsLoading(true);
-    
-    const start = await geocodeAddress(startLocation);
-    const end = await geocodeAddress(endLocation);
+    setShowRouteInput(false); // Close modal immediately
 
-    if (!start || !end) {
+    const startCoords = await geocodeAddress(startLocation);
+    const endCoords = await geocodeAddress(endLocation);
+
+    if (!startCoords || !endCoords) {
       Alert.alert('Error', 'Could not find one or both locations. Please check the addresses.');
       setIsLoading(false);
       return;
     }
 
-    let routePoints: { latitude: number; longitude: number; }[] = [];
-
-    // Generate route coordinates
-    /*
-    const routePoints = generateRoutePoints(start, end, alternativeAttempt); // This function is still used for the path
-
-    // Analyze route segments using the AI analyzer
-    const segments = await aiSafetyAnalyzer.analyzeRouteSegments(routePoints, alternativeAttempt > 0);
-
-    // Calculate overall score using the AI-compatible function
-    const score = calculateAIOverallSafetyScore(segments);
-
-    setRouteCoordinates(routePoints); // Set coordinates after analysis
-    setSafetySegments(segments);
-    setOverallScore(score);
-    setShowSaferAlternative(true);
-    */
-
     try {
-      const mode = 'driving'; // or 'walking', 'bicycling'
-      const alternatives = alternativeAttempt > 0;
-      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${start.latitude},${start.longitude}&destination=${end.latitude},${end.longitude}&key=${GOOGLE_MAPS_API_KEY}&mode=${mode}&alternatives=${alternatives}`;
-
-      const res = await fetch(url);
-      const json = await res.json();
-
-      // --- IMPROVED ERROR HANDLING ---
-      // Check the status from the Google Directions API response
-      if (json.status !== 'OK') {
-        let errorMessage = 'Could not find a route. Please try different locations.';
-        switch (json.status) {
-          case 'NOT_FOUND':
-            errorMessage = 'One or both of the locations could not be found. Please check your addresses.';
-            break;
-          case 'ZERO_RESULTS':
-            errorMessage = 'No route could be found between the start and end points.';
-            break;
-          case 'REQUEST_DENIED':
-            errorMessage = 'Routing request was denied. Please check if the Google Maps API key is valid and has the Directions API enabled.';
-            console.error('Directions API Error:', json.error_message);
-            break;
-          case 'OVER_QUERY_LIMIT':
-            errorMessage = 'The app has exceeded its request limit for today. Please try again later.';
-            break;
-        }
-        Alert.alert('No Route Found', errorMessage);
-        setIsLoading(false);
-        return;
-      }
-
-      const route = json.routes[0]; // Use the first route
-      const points = decodePolyline(route.overview_polyline.points);
-      routePoints = points.map(point => ({
-        latitude: point[0],
-        longitude: point[1],
-      }));
-
-      // --- PERFORMANCE IMPROVEMENT ---
-      // 1. Immediately show the route to the user for instant feedback.
-      // We'll draw it as a single, neutral-colored line for now.
-      setRouteCoordinates(routePoints);
-      setNavigationSteps(route.legs[0].steps); // Save real navigation steps
+      // 1. Show loading state and clear old route data
       setShowSaferAlternative(true);
       setOverallScore(0); // Reset score while analyzing
       setSafetySegments([]); // Clear old segments
 
-      // Fit map to the new route
-      if (mapRef.current) {
-        mapRef.current.fitToCoordinates(routePoints, {
-          edgePadding: { top: 100, right: 50, bottom: 150, left: 50 },
-          animated: true,
-        });
-      }
+      // 2. Call the new centralized safety analysis service
+      const { safestRoute, fastestRoute, allRoutes } = await analyzeAllRoutes(startCoords, endCoords);
 
-      // 2. Run the heavy AI analysis in the background.
-      // This is a non-blocking call, so the UI remains responsive.
-      (async () => {
-        const segments = await aiSafetyAnalyzer.analyzeRouteSegments(routePoints, alternativeAttempt > 0);
-        const score = calculateAIOverallSafetyScore(segments);
-        setSafetySegments(segments); // Update the route colors
-        setOverallScore(score); // Update the score card
-      })();
+      console.log(`Found ${allRoutes.length} routes. Safest score: ${safestRoute.safetyScore}, Fastest duration: ${fastestRoute.duration}s`);
 
+      // 3. Update the UI with the results of the analysis
+      setRouteCoordinates(safestRoute.coordinates);
+      setNavigationSteps(safestRoute.googleRoute.legs[0].steps);
+      setSafetySegments(safestRoute.safetySegments);
+      setOverallScore(safestRoute.safetyScore);
+
+      // Fit map to the recommended (safest) route
+      mapRef.current?.fitToCoordinates(safestRoute.coordinates, {
+        edgePadding: { top: 100, right: 50, bottom: 250, left: 50 },
+        animated: true,
+      });
+      
     } catch (error) {
-      console.error("Directions API error:", error);
-      Alert.alert('Routing Error', 'Failed to fetch route. Please check your API key and network connection.');
+      console.error("Route analysis error:", error);
+      setShowSaferAlternative(false); // Hide the card on error
+    } finally {
+      setIsLoading(false);
     }
-
-    // --- END AI INTEGRATION ---
-
-    // Fit map to show entire route
-    setIsLoading(false);
-    setShowRouteInput(false);
-  }, [startLocation, endLocation, alternativeAttempt, mapRef.current]);
+  }, [startLocation, endLocation, mapRef]);
 
   const findSaferRoute = useCallback(() => {
     setAlternativeAttempt(prev => prev + 1);
@@ -358,7 +287,7 @@ export default function MapScreen() {
     if (alternativeAttempt > 0) {
       generateRoute();
     }
-  }, [alternativeAttempt]);
+  }, [alternativeAttempt, generateRoute]);
 
   // Memoized distance calculation to avoid repeated computation
   const calculateDistance = useCallback((lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -528,12 +457,15 @@ export default function MapScreen() {
 
     // 1. Animate map to follow user
     if (mapRef.current) {
-      mapRef.current.animateCamera({
-        center: userCoords,
-        heading: userLocation.coords.heading ?? 0,
-        zoom: 18, // Keep it zoomed in
-        pitch: 45, // Keep the 3D perspective
-      }, { duration: 500 });
+      mapRef.current.animateCamera(
+        {
+          center: userCoords,
+          heading: userLocation.coords.heading ?? 0,
+          zoom: 18, // Keep it zoomed in
+          pitch: 45, // Keep the 3D perspective
+        },
+        { duration: 500 }
+      );
     }
 
     // 2. Check for step advancement
@@ -572,7 +504,7 @@ export default function MapScreen() {
     if (isNavigating && startLocation !== `${userLocation?.coords.latitude}, ${userLocation?.coords.longitude}`) {
       generateRoute();
     }
-  }, [startLocation, isNavigating]);
+  }, [isNavigating, userLocation, startLocation, generateRoute]);
 
   // Helper to check if user is off-route
   const isUserOffRoute = (userCoords: Location.LocationObject['coords'], route: any[]) => {
@@ -585,7 +517,20 @@ export default function MapScreen() {
     return true; // User is off-route
   };
 
-  const distanceToLine = (p: any, v: any, w: any) => { /* A helper function would be needed here */ return 999; };
+  const distanceToLine = (p: any, v: any, w: any) => {
+    const l2 = (v.latitude - w.latitude)**2 + (v.longitude - w.longitude)**2;
+    if (l2 === 0) return calculateDistance(p.latitude, p.longitude, v.latitude, v.longitude);
+    let t = ((p.latitude - v.latitude) * (w.latitude - v.latitude) + (p.longitude - v.longitude) * (w.longitude - v.longitude)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    const projection = {
+      latitude: v.latitude + t * (w.latitude - v.latitude),
+      longitude: v.longitude + t * (w.longitude - v.longitude)
+    };
+    return calculateDistance(
+      p.latitude, p.longitude,
+      projection.latitude, projection.longitude
+    ) / 1000; // convert to km
+  };
 
   // Memoized route points generation
   const generateRoutePoints = useCallback((start: any, end: any, attempt: number) => {
@@ -683,6 +628,7 @@ export default function MapScreen() {
         customMapStyle={darkMode ? darkMapStyle : []}
         showsUserLocation={true}
         showsMyLocationButton={false}
+        onRegionChangeComplete={setRegion}
       >
         {/* Draw safety segments */}
         {routeCoordinates.length > 0 && safetySegments.length === 0 && (
@@ -1793,7 +1739,7 @@ const makeStyles = (colors: any) => StyleSheet.create({
   // --- NEW: Left Nav Controls ---
   leftNavControlsContainer: {
     position: 'absolute',
-    bottom: 120,
+    bottom: 100,
     left: 15,
     zIndex: 1000,
     gap: 10,

@@ -63,7 +63,7 @@ The application follows a **modular, context-driven architecture** with:
 
 ### **Frontend**
 - **React Native** (0.81.4) - Cross-platform mobile development
-- **Expo SDK** (~54.0.9) - Development platform
+- **Expo SDK** (~51.0.0) - Development platform
 - **TypeScript** (~5.9.2) - Type safety
 - **React Navigation** (v7) - Navigation library
 

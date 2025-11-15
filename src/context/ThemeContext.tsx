@@ -58,8 +58,7 @@ export type ThemeContextType = {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const systemPref = Appearance.getColorScheme() === 'dark';
-  const [darkMode, setDarkMode] = useState<boolean>(systemPref);
+  const [darkMode, setDarkMode] = useState<boolean>(true); // Default to dark mode
 
   const colors = useMemo(() => (darkMode ? darkColors : lightColors), [darkMode]);
 

@@ -1,64 +1,102 @@
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback } from 'react';
+import { Linking, Alert } from 'react-native';
+import * as Location from 'expo-location';
+import { useAuth } from './AuthContext';
+import { fetchContacts } from '../services/contactsService';
 
-/**
- * Defines the shape of the SOS context data.
- * This now includes state and functions for the SOS confirmation modal.
- */
 export interface SOSContextType {
   shakeEnabled: boolean;
   setShakeEnabled: (enabled: boolean) => void;
   isConfirmingSOS: boolean;
+  noContactsModalVisible: boolean; // New state for no-contacts modal
   startSOSConfirmation: () => void;
   cancelSOSConfirmation: () => void;
   confirmSOS: () => void;
+  openWhatsApp: () => void; // Function to open WhatsApp
+  closeNoContactsModal: () => void; // Function to close the no-contacts modal
 }
 
-// Create the context with an undefined initial value.
 const SOSContext = createContext<SOSContextType | undefined>(undefined);
 
-/**
- * The provider component that wraps parts of the app that need access to SOS state.
- */
 export const SOSProvider = ({ children }: { children: ReactNode }) => {
-  // State for enabling/disabling the shake-to-SOS feature.
+  const { user } = useAuth();
   const [shakeEnabled, setShakeEnabled] = useState(false);
-  
-  // State to control the visibility of the SOS confirmation modal.
   const [isConfirmingSOS, setIsConfirmingSOS] = useState(false);
+  const [noContactsModalVisible, setNoContactsModalVisible] = useState(false);
 
-  const startSOSConfirmation = useCallback(() => {
-    if (!isConfirmingSOS) {
-      setIsConfirmingSOS(true);
+  const startSOSConfirmation = useCallback(async () => {
+    if (!user) {
+      // Should not happen if user is logged in, but as a safeguard
+      Alert.alert('Error', 'You must be logged in to use this feature.');
+      return;
     }
-  }, [isConfirmingSOS]);
+    if (isConfirmingSOS || noContactsModalVisible) return;
+
+    try {
+      const contacts = await fetchContacts(user.id);
+      if (contacts && contacts.length > 0) {
+        // Contacts exist, proceed with normal SOS confirmation
+        setIsConfirmingSOS(true);
+      } else {
+        // No contacts, show the specific modal for it
+        setNoContactsModalVisible(true);
+      }
+    } catch (error) {
+      console.error('Failed to fetch contacts for SOS:', error);
+      Alert.alert('Error', 'Could not verify emergency contacts. Please try again.');
+    }
+  }, [isConfirmingSOS, noContactsModalVisible, user]);
 
   const cancelSOSConfirmation = useCallback(() => setIsConfirmingSOS(false), []);
   const confirmSOS = useCallback(() => setIsConfirmingSOS(false), []);
+  const closeNoContactsModal = useCallback(() => setNoContactsModalVisible(false), []);
 
-  // Memoize the context value to prevent unnecessary re-renders of consumers.
+  const openWhatsApp = useCallback(async () => {
+    closeNoContactsModal(); // Close the modal first
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location access is required to share your location.');
+        return;
+      }
+      const location = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = location.coords;
+      const message = `Emergency! I need help. My current location is: https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+      // Opens WhatsApp to let the user choose a contact
+      await Linking.openURL(`whatsapp://send?text=${encodeURIComponent(message)}`);
+    } catch (error) {
+      Alert.alert('Error', 'Could not open WhatsApp. Please make sure it is installed.');
+    }
+  }, [closeNoContactsModal]);
+
   const value = useMemo(() => ({
     shakeEnabled,
     setShakeEnabled,
     isConfirmingSOS,
+    noContactsModalVisible,
     startSOSConfirmation,
     cancelSOSConfirmation,
     confirmSOS,
-  }), [shakeEnabled, isConfirmingSOS, startSOSConfirmation, cancelSOSConfirmation, confirmSOS]);
+    openWhatsApp,
+    closeNoContactsModal,
+  }), [
+    shakeEnabled,
+    isConfirmingSOS,
+    noContactsModalVisible,
+    startSOSConfirmation,
+    cancelSOSConfirmation,
+    confirmSOS,
+    openWhatsApp,
+    closeNoContactsModal,
+  ]);
 
   return <SOSContext.Provider value={value}>{children}</SOSContext.Provider>;
 };
 
-/**
- * Custom hook to easily access the SOS context.
- * This hook ensures it's used within a SOSProvider.
- */
 export const useSOS = (): SOSContextType => {
   const context = useContext(SOSContext);
   if (context === undefined) {
-    // This error is thrown if useSOS is used outside of a SOSProvider.
     throw new Error('useSOS must be used within a SOSProvider');
   }
-  // The defensive code in App.tsx is no longer strictly necessary
-  // but is good practice. We can now safely return the context.
   return context;
 };

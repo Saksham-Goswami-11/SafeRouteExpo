@@ -1,5 +1,7 @@
 import type { ExpoConfig } from '@expo/config';
 
+require('dotenv').config();
+
 const defineConfig = (): ExpoConfig => ({
   name: 'SafeRouteExpo',
   slug: 'SafeRouteExpo',
@@ -18,7 +20,10 @@ const defineConfig = (): ExpoConfig => ({
     infoPlist: {
       NSMicrophoneUsageDescription: "This app uses the microphone to enable voice-activated SOS commands.",
       NSSpeechRecognitionUsageDescription: "This app uses speech recognition to listen for the SOS activation phrase."
-    }
+    },
+    config: {
+      googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
+    },
   },
   android: {
     adaptiveIcon: {
@@ -27,6 +32,11 @@ const defineConfig = (): ExpoConfig => ({
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
+    config: {
+      googleMaps: {
+        apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
+      },
+    },
   },
   web: {
     favicon: './assets/favicon.png',

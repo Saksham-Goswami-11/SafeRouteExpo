@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Alert, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Alert, Platform, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { addSavedAddress, deleteSavedAddress, fetchSavedAddresses, SavedAddress, updateSavedAddress } from '../../services/addressService';
+import * as Location from 'expo-location';
 
 export default function SavedAddressesScreen() {
   const { user } = useAuth();
@@ -15,6 +16,7 @@ export default function SavedAddressesScreen() {
   const [lng, setLng] = useState('');
   const [editId, setEditId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
+  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
 
   const load = async () => {
     if (!user) return;
@@ -41,6 +43,56 @@ export default function SavedAddressesScreen() {
     await load();
   };
 
+  const handleGetCurrentLocation = async () => {
+    setIsFetchingLocation(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location access is required to get your current address.');
+        setIsFetchingLocation(false);
+        return;
+      }
+      const location = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = location.coords;
+      setLat(latitude.toString());
+      setLng(longitude.toString());
+      
+      const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      if (!apiKey) {
+        Alert.alert('Error', 'Google Maps API key is not configured.');
+        setIsFetchingLocation(false);
+        return;
+      }
+
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${apiKey}`;
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      try {
+        const data = await response.json();
+        if (data.results && data.results.length > 0) {
+          setAddressText(data.results[0].formatted_address);
+        } else {
+          setAddressText('Address not found');
+        }
+      } catch (jsonError) {
+        console.error('Failed to parse JSON response:', jsonError);
+        const textResponse = await response.text();
+        console.error('Non-JSON response:', textResponse);
+        setAddressText('Address not found');
+      }
+    } catch (error) {
+      console.error('Failed to get current location:', error);
+      Alert.alert('Error', 'Could not fetch your current location.');
+    } finally {
+      setIsFetchingLocation(false);
+    }
+  };
+
   const styles = makeStyles(colors);
 
   return (
@@ -51,6 +103,15 @@ export default function SavedAddressesScreen() {
         <View style={styles.card}>
           <Text style={styles.label}>Add new</Text>
           <TextInput style={styles.input} placeholder="Label (e.g., Home)" placeholderTextColor={colors.textMuted} value={label} onChangeText={setLabel} />
+          
+          <TouchableOpacity onPress={handleGetCurrentLocation} style={styles.currentLocationBtn} disabled={isFetchingLocation}>
+            {isFetchingLocation ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={{ color: '#FFF', fontWeight: '600' }}>Use Current Location</Text>
+            )}
+          </TouchableOpacity>
+
           <TextInput style={styles.input} placeholder="Address text" placeholderTextColor={colors.textMuted} value={addressText} onChangeText={setAddressText} />
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <TextInput style={[styles.input, { flex: 1 }]} placeholder="Latitude" placeholderTextColor={colors.textMuted} keyboardType="decimal-pad" value={lat} onChangeText={setLat} />
@@ -139,6 +200,7 @@ const makeStyles = (colors: any) => StyleSheet.create({
   label: { marginBottom: 8, color: colors.textSecondary },
   input: { height: 48, borderRadius: 12, paddingHorizontal: 12, borderWidth: 1, marginBottom: 10, backgroundColor: colors.background, color: colors.text, borderColor: 'rgba(255,255,255,0.1)' },
   addBtn: { height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  currentLocationBtn: { height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary, marginBottom: 10 },
   smallBtn: { height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   listItem: { padding: 14, borderRadius: 12, borderWidth: 1, marginBottom: 10, backgroundColor: colors.backgroundCard, borderColor: 'rgba(255,255,255,0.08)', flexDirection: 'row', alignItems: 'center' },
   itemLabel: { color: colors.text, fontWeight: '800', marginBottom: 2 },

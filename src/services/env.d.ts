@@ -4,5 +4,6 @@
  */
 declare module '@env' {
   export const EXPO_PUBLIC_GOOGLE_PLACES_API_KEY: string;
+  export const EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY: string;
   export const GNEWS_API_KEY: string;
 }

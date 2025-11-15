@@ -19,10 +19,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafetySegment } from '../utils/safetyAnalysis';
 import { useAuth } from '../context/AuthContext';
 import { fetchSavedAddresses, SavedAddress, addSavedAddress } from '../services/addressService';
-import { analyzeAllRoutes } from '../../index';
-// --- REAL ROUTING INTEGRATION ---
-// IMPORTANT: Add your Google Maps API Key here
-const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY; 
+import { analyzeAllRoutes } from '../utils/routeAnalysis';
+
 
 const { width, height } = Dimensions.get('window');
 
@@ -582,39 +580,6 @@ export default function MapScreen() {
     return '⬆️';
   };
 
-  // Function to decode Google's encoded polyline strings
-  const decodePolyline = (encoded: string) => {
-    if (!encoded) {
-      return [];
-    }
-    let points = [];
-    let index = 0, len = encoded.length;
-    let lat = 0, lng = 0;
-
-    while (index < len) {
-      let b, shift = 0, result = 0;
-      do {
-        b = encoded.charCodeAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.charCodeAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-
-      points.push([lat / 1e5, lng / 1e5]);
-    }
-    return points;
-  };
   // --- END REAL ROUTING INTEGRATION ---
 
   return (

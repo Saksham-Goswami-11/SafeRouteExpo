@@ -1,79 +1,153 @@
-import { getCrimeDataForCoordinate, getNewsForLocation, analyzeNewsSentiment } from '../services/api';
+import { analyzeRouteSegments, calculateOverallSafetyScore, SafetySegment } from './safetyAnalysis';
 
-const CRIME_WEIGHT = 0.6;
-const NEWS_WEIGHT = 0.4;
+// IMPORTANT: Add your Google Maps API Key here
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
-// Define a simple type for a route point for better type safety.
-interface RoutePoint {
+// --- Interfaces for Route Analysis ---
+
+interface Coordinate {
   latitude: number;
   longitude: number;
 }
 
-/**
- * Analyzes the safety score for a single coordinate.
- * @param lat - Latitude
- * @param lon - Longitude
- * @returns A promise that resolves to a safety score (0-100).
- */
-export async function analyzeSingleRoute(lat: number, lon: number): Promise<number> {
-  try {
-    // Fetch crime and news data in parallel for better performance.
-    const [crimeDataResult, newsArticlesResult] = await Promise.allSettled([
-      getCrimeDataForCoordinate(lat, lon),
-      getNewsForLocation(lat, lon),
-    ]);
-
-    // Calculate Crime Score
-    let crimeScore = 50; // Default to a neutral score
-    if (crimeDataResult.status === 'fulfilled' && crimeDataResult.value) {
-      const crimeCount = crimeDataResult.value.crime_count || 0;
-      crimeScore = Math.max(0, 100 - crimeCount * 10); // Example scoring
-    } else if (crimeDataResult.status === 'rejected') {
-      console.error("Failed to fetch crime data:", crimeDataResult.reason);
-    }
-
-    // Calculate News Score
-    let totalSentiment = 0;
-    let newsScore = 50; // Default to a neutral score
-    if (newsArticlesResult.status === 'fulfilled' && newsArticlesResult.value && newsArticlesResult.value.length > 0) {
-      // Handle individual sentiment analysis errors gracefully.
-      const sentimentResults = await Promise.allSettled(
-        newsArticlesResult.value.map((article: any) => analyzeNewsSentiment(article.title))
-      );
-      
-      const validScores = sentimentResults
-        .filter(result => result.status === 'fulfilled')
-        .map(result => (result as PromiseFulfilledResult<number>).value);
-
-      if (validScores.length > 0) {
-        totalSentiment = validScores.reduce((acc, score) => acc + score, 0) / validScores.length;
-      }
-    } else if (newsArticlesResult.status === 'rejected') {
-      console.error("Failed to fetch news data:", newsArticlesResult.reason);
-    }
-    // Convert sentiment (-1 to 1) to a safety score (0 to 100)
-    newsScore = (totalSentiment + 1) * 50;
-
-    // Combine scores
-    const finalScore = (crimeScore * CRIME_WEIGHT) + (newsScore * NEWS_WEIGHT);
-    return Math.round(Math.max(0, Math.min(100, finalScore)));
-  } catch (error) {
-    console.error('Error analyzing route:', error);
-    return 50; // Return a neutral score on error
-  }
+interface RouteInfo {
+  coordinates: Coordinate[];
+  safetySegments: SafetySegment[];
+  safetyScore: number;
+  duration: number; // in seconds
+  distance: number; // in meters
+  googleRoute: any; // Raw Google route object
 }
 
-export async function analyzeAllRoutes(routes: RoutePoint[]): Promise<number[]> {
-    const results = await Promise.allSettled(
-        routes.map(route => analyzeSingleRoute(route.latitude, route.longitude))
-    );
+interface AnalysisResult {
+  safestRoute: RouteInfo;
+  fastestRoute: RouteInfo;
+  allRoutes: RouteInfo[];
+}
 
-    return results.map(result => {
-        if (result.status === 'fulfilled') {
-            return result.value;
-        } else {
-            console.error("Failed to analyze a route point:", result.reason);
-            return 50; // Return a neutral score for the failed point
-        }
-    });
+// --- Polyline Decoder ---
+
+/**
+ * Decodes a Google Maps encoded polyline string into an array of coordinates.
+ * @param encoded - The encoded polyline string.
+ * @returns An array of [latitude, longitude] pairs.
+ */
+function decodePolyline(encoded: string): [number, number][] {
+  if (!encoded) {
+    return [];
+  }
+  const points: [number, number][] = [];
+  let index = 0, len = encoded.length;
+  let lat = 0, lng = 0;
+
+  while (index < len) {
+    let b, shift = 0, result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    lng += dlng;
+
+    points.push([lat / 1e5, lng / 1e5]);
+  }
+  return points;
+}
+
+// --- Core Route Analysis Logic ---
+
+/**
+ * Fetches routes from Google Directions API and analyzes their safety.
+ * @param startCoords - The starting coordinates.
+ * @param endCoords - The destination coordinates.
+ * @returns A promise that resolves to an object with the safest route, fastest route, and all routes.
+ */
+export async function analyzeAllRoutes(
+  startCoords: Coordinate,
+  endCoords: Coordinate
+): Promise<AnalysisResult> {
+  if (!GOOGLE_MAPS_API_KEY) {
+    throw new Error("Google Maps API key is not configured. Please set EXPO_PUBLIC_GOOGLE_MAPS_API_KEY.");
+  }
+
+  const origin = `${startCoords.latitude},${startCoords.longitude}`;
+  const destination = `${endCoords.latitude},${endCoords.longitude}`;
+  const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}&alternatives=true`;
+
+  console.log("Fetching routes from Google Directions API...");
+  const response = await fetch(url);
+  const data = await response.json();
+
+  if (data.status !== 'OK' || !data.routes || data.routes.length === 0) {
+    console.error("Google Directions API Error:", data.error_message || data.status);
+    throw new Error(`Failed to fetch routes from Google API: ${data.status}`);
+  }
+
+  console.log(`Received ${data.routes.length} routes from API. Analyzing...`);
+
+  // Process each route in parallel
+  const allRoutesPromises = data.routes.map(async (route: any): Promise<RouteInfo> => {
+    const leg = route.legs[0];
+    if (!leg) {
+      // This should not happen with a valid route, but good to guard against it
+      throw new Error("Invalid route structure: missing legs.");
+    }
+
+    // 1. Decode polyline to get route coordinates
+    const decodedPoints = decodePolyline(route.overview_polyline.points);
+    const coordinates = decodedPoints.map(([latitude, longitude]) => ({ latitude, longitude }));
+
+    // 2. Analyze route for safety segments
+    const safetySegments = analyzeRouteSegments(coordinates);
+
+    // 3. Calculate overall safety score
+    const safetyScore = calculateOverallSafetyScore(safetySegments);
+
+    return {
+      coordinates,
+      safetySegments,
+      safetyScore,
+      duration: leg.duration.value, // seconds
+      distance: leg.distance.value, // meters
+      googleRoute: route,
+    };
+  });
+
+  const allRoutes = await Promise.all(allRoutesPromises);
+
+  if (allRoutes.length === 0) {
+    throw new Error("No valid routes could be processed.");
+  }
+
+  // 4. Identify safest and fastest routes
+  let safestRoute = allRoutes[0];
+  let fastestRoute = allRoutes[0];
+
+  for (const route of allRoutes) {
+    if (route.safetyScore > safestRoute.safetyScore) {
+      safestRoute = route;
+    }
+    if (route.duration < fastestRoute.duration) {
+      fastestRoute = route;
+    }
+  }
+
+  console.log(`Analysis complete. Safest score: ${safestRoute.safetyScore}, Fastest duration: ${fastestRoute.duration}s`);
+
+  return {
+    safestRoute,
+    fastestRoute,
+    allRoutes,
+  };
 }

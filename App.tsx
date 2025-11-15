@@ -36,6 +36,7 @@ import { initDB } from './src/services/sqlite';
 import { runStartupCleanup } from './src/utils/databaseCleanup';
 import NewsAnalyzerTester from './src/components/NewsAnalyzerTester';
 import SOSConfirmationModal from './src/components/SOSConfirmationModal';
+import NoContactsModal from './src/components/NoContactsModal'; // Import the new modal
 import { ProfileStackParamList } from './src/navigation/ProfileStack';
 
 // --- NAVIGATION TYPES ---
@@ -394,6 +395,11 @@ function AppContent() {
   const isConfirmingSOS = sosContext?.isConfirmingSOS ?? false;
   const confirmSOS = sosContext?.confirmSOS ?? (() => {});
   const cancelSOSConfirmation = sosContext?.cancelSOSConfirmation ?? (() => {});
+  
+  // New state and functions for the no-contacts modal
+  const noContactsModalVisible = sosContext?.noContactsModalVisible ?? false;
+  const openWhatsApp = sosContext?.openWhatsApp ?? (() => {});
+  const closeNoContactsModal = sosContext?.closeNoContactsModal ?? (() => {});
 
 
   const handleConfirm = async () => {
@@ -427,7 +433,16 @@ function AppContent() {
   return (
     <>
       <InnerApp />
-      <SOSConfirmationModal visible={isConfirmingSOS} onConfirm={handleConfirm} onCancel={cancelSOSConfirmation} />
+      <SOSConfirmationModal 
+        visible={isConfirmingSOS} 
+        onConfirm={handleConfirm} 
+        onCancel={cancelSOSConfirmation} 
+      />
+      <NoContactsModal
+        visible={noContactsModalVisible}
+        onClose={closeNoContactsModal}
+        onConfirm={openWhatsApp}
+      />
     </>
   );
 }

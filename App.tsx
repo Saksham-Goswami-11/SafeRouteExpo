@@ -1,4 +1,6 @@
+import 'react-native-gesture-handler';
 import React, { useEffect, useRef, useState } from 'react';
+import 'react-native-url-polyfill/auto';
 import {
   StyleSheet,
   Text,

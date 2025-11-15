@@ -108,26 +108,41 @@ export async function generateToken(): Promise<string> {
 }
 
 export async function createUser(email: string, password: string, fullName: string): Promise<User> {
-  const id = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    email + Date.now().toString()
-  );
+
+  const id = Crypto.randomUUID();
+
   const passwordHash = await hashPassword(password);
+
   const createdAt = Date.now();
 
+
+
   const db = await getDB();
+
   await db.runAsync(
+
     'INSERT INTO users (id, email, full_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
+
     [id, email.toLowerCase(), fullName, passwordHash, createdAt]
+
   );
 
+
+
   return {
+
     id,
+
     email: email.toLowerCase(),
+
     full_name: fullName,
+
     password_hash: passwordHash,
+
     created_at: createdAt
+
   };
+
 }
 
 export async function authenticateUser(email: string, password: string): Promise<User | null> {

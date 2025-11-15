@@ -1,10 +1,11 @@
+import { EXPO_PUBLIC_GOOGLE_PLACES_API_KEY } from '@env';
+
 /**
  * This is your Google Cloud API Key.
  * IMPORTANT: Store this in a .env file and do not commit it to version control.
  * Create a file named .env in your project root and add:
  * EXPO_PUBLIC_GOOGLE_PLACES_API_KEY="YOUR_API_KEY_HERE"
  */
-const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY;
 
 const PLACES_API_ENDPOINT = 'https://places.googleapis.com/v1/places:searchNearby';
 
@@ -39,7 +40,7 @@ export async function searchNearbyPlaces(
   type: 'police' | 'hospital',
   radius: number = 5000
 ): Promise<Place[]> {
-  if (!GOOGLE_PLACES_API_KEY) {
+  if (!EXPO_PUBLIC_GOOGLE_PLACES_API_KEY) {
     console.error('Google Places API Key is not configured.');
     throw new Error('API key is missing.');
   }
@@ -59,7 +60,7 @@ export async function searchNearbyPlaces(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+      'X-Goog-Api-Key': EXPO_PUBLIC_GOOGLE_PLACES_API_KEY,
       'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
     },
     body: JSON.stringify(requestBody),

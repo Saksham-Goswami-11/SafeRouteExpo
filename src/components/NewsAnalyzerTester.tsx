@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
-import { analyzeAreaSafetyFromNews, SafetyAnalysisResult } from '../utils/newsSafetyAnalyzer';
 import { useTheme } from '../context/ThemeContext';
+import { analyzeAreaSafetyFromNews, SafetyAnalysisResult } from '../utils/newsSafetyAnalyzer';
 
 const TEST_LOCATION = {
   // A location in Mumbai, India
@@ -53,6 +53,8 @@ export default function NewsAnalyzerTester() {
         <View style={styles.resultContainer}>
           <Text style={styles.resultTitle}>Analysis Result</Text>
           <Text style={styles.score}>Safety Score: {result.safetyScore} / 100</Text>
+
+
           <Text style={styles.headlinesTitle}>Contributing Headlines:</Text>
           <ScrollView style={styles.headlinesContainer}>
             {result.contributingHeadlines.map((headline, index) => (
@@ -120,6 +122,7 @@ const makeStyles = (colors: any) => StyleSheet.create({
     color: colors.primary,
     marginBottom: 10,
   },
+
   headlinesTitle: {
     fontSize: 14,
     fontWeight: 'bold',

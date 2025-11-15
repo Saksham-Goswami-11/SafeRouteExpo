@@ -14,6 +14,7 @@ export type ColorsType = {
   safe: string;
   warning: string;
   danger: string;
+  border: string;
 };
 
 const lightColors: ColorsType = {
@@ -29,6 +30,7 @@ const lightColors: ColorsType = {
   safe: '#10B981',
   warning: '#F59E0B',
   danger: '#EF4444',
+  border: '#E5E7EB',
 };
 
 const darkColors: ColorsType = {
@@ -44,6 +46,7 @@ const darkColors: ColorsType = {
   safe: '#10B981',
   warning: '#F59E0B',
   danger: '#EF4444',
+  border: '#374151',
 };
 
 export type ThemeContextType = {

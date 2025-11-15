@@ -19,8 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafetySegment } from '../utils/safetyAnalysis';
 import { useAuth } from '../context/AuthContext';
 import { fetchSavedAddresses, SavedAddress, addSavedAddress } from '../services/addressService';
-import { analyzeAllRoutes } from '../services/safetyAnalysis';
-
+import { analyzeAllRoutes } from '../../index';
 // --- REAL ROUTING INTEGRATION ---
 // IMPORTANT: Add your Google Maps API Key here
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY; 

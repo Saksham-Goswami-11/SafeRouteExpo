@@ -41,6 +41,10 @@ const defineConfig = (): ExpoConfig => ({
   web: {
     favicon: './assets/favicon.png',
   },
-});
+  scheme: 'saferouteexpo',
+  facebookAppId: 'YOUR_FACEBOOK_APP_ID',
+  facebookDisplayName: 'SafeRouteExpo',
+  facebookScheme: 'fbYOUR_FACEBOOK_APP_ID',
+} as any);
 
 export default defineConfig;

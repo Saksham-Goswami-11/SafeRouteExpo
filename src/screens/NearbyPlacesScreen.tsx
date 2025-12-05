@@ -8,13 +8,14 @@ import {
   ActivityIndicator,
   Linking,
   Platform,
-  Alert
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext'; // Path update karein
 import { useRoute, RouteProp } from '@react-navigation/native';
 import { searchNearbyPlaces, Place } from '../services/placesService';
 import * as Location from 'expo-location';
+
 
 // Define route params
 type NearbyPlacesRouteParams = {
@@ -25,7 +26,7 @@ type NearbyPlacesRouteParams = {
 
 type NearbyPlacesRouteProp = RouteProp<NearbyPlacesRouteParams, 'NearbyPlaces'>;
 
-export default function NearbyPlacesScreen() {
+export default function NearbyPlacesScreen({ navigation }: any) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]); // Memoized styles
   const route = useRoute<NearbyPlacesRouteProp>();
@@ -87,10 +88,16 @@ export default function NearbyPlacesScreen() {
       colors={[colors.background, colors.backgroundLight]}
       style={styles.container}
     >
+      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <Text style={styles.backButtonText}>← Back</Text>
+      </TouchableOpacity>
+
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
+          <Text style={styles.headerIcon}>{icon}</Text>
           <Text style={styles.headerTitle}>{title}</Text>
-          <Text style={styles.headerSubtitle}>
+          <Text style={styles.headerSubtitle}
+>
             Showing nearest {type} locations within 5km
           </Text>
         </View>
@@ -100,8 +107,11 @@ export default function NearbyPlacesScreen() {
         )}
 
         {error && (
-          <View style={styles.card}>
+          <View style={[styles.card, styles.errorContainer]}>
             <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.tryAgainButton} onPress={fetchNearbyPlaces}>
+              <Text style={styles.tryAgainButtonText}>Try Again</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -142,13 +152,33 @@ const makeStyles = (colors: any) =>
     container: {
       flex: 1,
     },
+    backButton: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 60 : 40,
+      left: 20,
+      zIndex: 10,
+      backgroundColor: 'rgba(0,0,0,0.3)',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 15,
+    },
+    backButtonText: {
+      color: '#FFF',
+      fontSize: 14,
+      fontWeight: '600',
+    },
     content: {
       padding: 20,
-      paddingTop: Platform.OS === 'ios' ? 60 : 40,
+      paddingTop: Platform.OS === 'ios' ? 110 : 100,
       paddingBottom: 100,
     },
     header: {
       marginBottom: 25,
+      alignItems: 'center',
+    },
+    headerIcon: {
+      fontSize: 48,
+      marginBottom: 15,
     },
     headerTitle: {
       fontSize: 28,
@@ -172,10 +202,26 @@ const makeStyles = (colors: any) =>
     loader: {
       marginTop: 50,
     },
+    errorContainer: {
+      alignItems: 'center',
+      padding: 30,
+    },
     errorText: {
       color: colors.danger,
       fontSize: 16,
       textAlign: 'center',
+      marginBottom: 20,
+    },
+    tryAgainButton: {
+      backgroundColor: colors.primary,
+      paddingVertical: 12,
+      paddingHorizontal: 30,
+      borderRadius: 25,
+    },
+    tryAgainButtonText: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: 'bold',
     },
     resourcesList: {
       gap: 12,

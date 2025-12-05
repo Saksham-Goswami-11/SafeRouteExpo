@@ -20,7 +20,11 @@ import { SafetySegment } from '../utils/safetyAnalysis';
 import { useAuth } from '../context/AuthContext';
 import { fetchSavedAddresses, SavedAddress, addSavedAddress } from '../services/addressService';
 import { analyzeAllRoutes } from '../utils/routeAnalysis';
+import { aiSafetyAnalyzer, calculateAIOverallSafetyScore } from '../utils/aiSafetyAnalyzer';
 
+// --- REAL ROUTING INTEGRATION ---
+// IMPORTANT: Add your Google Maps API Key here
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 const { width, height } = Dimensions.get('window');
 
@@ -53,6 +57,34 @@ const darkMapStyle = [
   },
 ];
 
+// Helper to decode Google's encoded polyline strings
+const decodePolyline = (t: string) => {
+  let points = [];
+  let index = 0, len = t.length;
+  let lat = 0, lng = 0;
+  while (index < len) {
+    let b, shift = 0, result = 0;
+    do {
+      b = t.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    lat += dlat;
+    shift = 0;
+    result = 0;
+    do {
+      b = t.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    lng += dlng;
+    points.push([lat / 1e5, lng / 1e5]);
+  }
+  return points;
+};
+
 export default function MapScreen() {
   const { colors, darkMode } = useTheme();
   const mapRef = useRef<MapView>(null);
@@ -79,7 +111,7 @@ export default function MapScreen() {
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [startSuggestions, setStartSuggestions] = useState<SavedAddress[]>([]);
   const [endSuggestions, setEndSuggestions] = useState<SavedAddress[]>([]);
-  
+
   // Navigation states
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -118,7 +150,7 @@ export default function MapScreen() {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
       });
-      
+
     })();
   }, []);
 
@@ -141,16 +173,16 @@ export default function MapScreen() {
   // Memoized suggestions to avoid recalculation on every render
   const startSuggestionsMemo = useMemo(() => {
     const q = startLocation.toLowerCase().trim();
-    return q ? savedAddresses.filter(a => 
-      a.label.toLowerCase().includes(q) || 
+    return q ? savedAddresses.filter(a =>
+      a.label.toLowerCase().includes(q) ||
       a.address_text.toLowerCase().includes(q)
     ).slice(0, 5) : savedAddresses.slice(0, 5);
   }, [startLocation, savedAddresses]);
 
   const endSuggestionsMemo = useMemo(() => {
     const q = endLocation.toLowerCase().trim();
-    return q ? savedAddresses.filter(a => 
-      a.label.toLowerCase().includes(q) || 
+    return q ? savedAddresses.filter(a =>
+      a.label.toLowerCase().includes(q) ||
       a.address_text.toLowerCase().includes(q)
     ).slice(0, 5) : savedAddresses.slice(0, 5);
   }, [endLocation, savedAddresses]);
@@ -211,7 +243,7 @@ export default function MapScreen() {
     } catch (error) {
       console.log('Geocoding error:', error);
     }
-    
+
     // Try to parse as coordinates
     const coordMatch = address.match(/^(-?\d+\.?\d*),\s*(-?\d+\.?\d*)$/);
     if (coordMatch) {
@@ -220,7 +252,7 @@ export default function MapScreen() {
         longitude: parseFloat(coordMatch[2]),
       };
     }
-    
+
     return null;
   };
 
@@ -232,47 +264,90 @@ export default function MapScreen() {
 
     console.log('🤖 Starting new safety analysis workflow...');
     setIsLoading(true);
-    setShowRouteInput(false); // Close modal immediately
 
-    const startCoords = await geocodeAddress(startLocation);
-    const endCoords = await geocodeAddress(endLocation);
+    const start = await geocodeAddress(startLocation);
+    const end = await geocodeAddress(endLocation);
 
-    if (!startCoords || !endCoords) {
+    if (!start || !end) {
       Alert.alert('Error', 'Could not find one or both locations. Please check the addresses.');
       setIsLoading(false);
       return;
     }
 
+    let routePoints: { latitude: number; longitude: number; }[] = [];
+
     try {
-      // 1. Show loading state and clear old route data
+      const mode = 'driving';
+      // Always request alternatives to find the safest path
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${start.latitude},${start.longitude}&destination=${end.latitude},${end.longitude}&key=${GOOGLE_MAPS_API_KEY}&mode=${mode}&alternatives=true`;
+
+      const res = await fetch(url);
+      const json = await res.json();
+
+      if (json.status !== 'OK') {
+        let errorMessage = 'Could not find a route.';
+        if (json.status === 'ZERO_RESULTS') errorMessage = 'No route found.';
+        Alert.alert('No Route Found', errorMessage);
+        setIsLoading(false);
+        return;
+      }
+
+      // Analyze all routes to find the safest one
+      const routes = json.routes;
+      let bestRoute = routes[0];
+      let bestScore = -1;
+      let bestSegments: SafetySegment[] = [];
+      let bestPoints: any[] = [];
+
+      console.log(`Found ${routes.length} routes. Analyzing safety...`);
+
+      for (const route of routes) {
+        const points = decodePolyline(route.overview_polyline.points);
+        const mappedPoints = points.map(point => ({
+          latitude: point[0],
+          longitude: point[1],
+        }));
+
+        // Analyze this route
+        const segments = await aiSafetyAnalyzer.analyzeRouteSegments(mappedPoints, false);
+        const score = calculateAIOverallSafetyScore(segments);
+
+        console.log(`Route score: ${score}`);
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestRoute = route;
+          bestSegments = segments;
+          bestPoints = mappedPoints;
+        }
+      }
+
+      // Use the best route
+      setRouteCoordinates(bestPoints);
+      setNavigationSteps(bestRoute.legs[0].steps);
+      setSafetySegments(bestSegments);
+      setOverallScore(bestScore);
       setShowSaferAlternative(true);
-      setOverallScore(0); // Reset score while analyzing
-      setSafetySegments([]); // Clear old segments
 
-      // 2. Call the new centralized safety analysis service
-      const { safestRoute, fastestRoute, allRoutes } = await analyzeAllRoutes(startCoords, endCoords);
+      // Fit map
+      if (mapRef.current) {
+        mapRef.current.fitToCoordinates(bestPoints, {
+          edgePadding: { top: 100, right: 50, bottom: 150, left: 50 },
+          animated: true,
+        });
+      }
 
-      console.log(`Found ${allRoutes.length} routes. Safest score: ${safestRoute.safetyScore}, Fastest duration: ${fastestRoute.duration}s`);
-
-      // 3. Update the UI with the results of the analysis
-      setRouteCoordinates(safestRoute.coordinates);
-      setNavigationSteps(safestRoute.googleRoute.legs[0].steps);
-      setSafetySegments(safestRoute.safetySegments);
-      setOverallScore(safestRoute.safetyScore);
-
-      // Fit map to the recommended (safest) route
-      mapRef.current?.fitToCoordinates(safestRoute.coordinates, {
-        edgePadding: { top: 100, right: 50, bottom: 250, left: 50 },
-        animated: true,
-      });
-      
     } catch (error) {
-      console.error("Route analysis error:", error);
-      setShowSaferAlternative(false); // Hide the card on error
-    } finally {
-      setIsLoading(false);
+      console.error("Directions API error:", error);
+      Alert.alert('Routing Error', 'Failed to fetch route.');
     }
-  }, [startLocation, endLocation, mapRef]);
+
+    // --- END AI INTEGRATION ---
+
+    // Fit map to show entire route
+    setIsLoading(false);
+    setShowRouteInput(false);
+  }, [startLocation, endLocation, alternativeAttempt, mapRef.current]);
 
   const findSaferRoute = useCallback(() => {
     setAlternativeAttempt(prev => prev + 1);
@@ -289,54 +364,54 @@ export default function MapScreen() {
   // Memoized distance calculation to avoid repeated computation
   const calculateDistance = useCallback((lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371e3; // Earth's radius in meters
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) *
+      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     return R * c;
   }, []);
 
   // Memoized bearing calculation
   const calculateBearing = useCallback((lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
 
     const x = Math.sin(Δλ) * Math.cos(φ2);
     const y = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
 
     const θ = Math.atan2(x, y);
-    return (θ * 180/Math.PI + 360) % 360;
+    return (θ * 180 / Math.PI + 360) % 360;
   }, []);
 
   // Memoized navigation steps to avoid recalculation
   const generateNavigationSteps = useCallback((routePoints: any[]) => {
     if (routePoints.length < 2) return [];
-    
+
     const steps = [];
     let totalDistance = 0;
-    
+
     for (let i = 0; i < routePoints.length - 1; i++) {
       const current = routePoints[i];
       const next = routePoints[i + 1];
       const distance = calculateDistance(current.latitude, current.longitude, next.latitude, next.longitude);
       const bearing = calculateBearing(current.latitude, current.longitude, next.latitude, next.longitude);
-      
+
       // Determine direction based on bearing
       let direction = 'Continue straight';
       let icon = '⬆️';
-      
+
       if (i > 0) {
         const prev = routePoints[i - 1];
         const prevBearing = calculateBearing(prev.latitude, prev.longitude, current.latitude, current.longitude);
         const turn = (bearing - prevBearing + 360) % 360;
-        
+
         if (turn > 45 && turn < 135) {
           direction = 'Turn right';
           icon = '↗️';
@@ -348,9 +423,9 @@ export default function MapScreen() {
           icon = '↩️';
         }
       }
-      
+
       totalDistance += distance;
-      
+
       steps.push({
         instruction: direction,
         distance: Math.round(distance),
@@ -360,7 +435,7 @@ export default function MapScreen() {
         bearing: bearing
       });
     }
-    
+
     // Add final destination step
     steps.push({
       instruction: 'You have arrived at your destination',
@@ -370,7 +445,7 @@ export default function MapScreen() {
       icon: '🏁',
       bearing: 0
     });
-    
+
     return steps;
   }, []);
 
@@ -388,11 +463,11 @@ export default function MapScreen() {
       try {
         setCurrentStepIndex(0);
         setIsNavigating(true);
-        
+
         const totalDurationSeconds = navigationSteps.reduce((sum, step) => sum + step.duration.value, 0);
         const estimatedMinutes = Math.ceil(totalDurationSeconds / 60);
         setEstimatedTime(estimatedMinutes);
-        
+
         // Close route input and safety card
         setShowRouteInput(false);
         setShowSaferAlternative(false);
@@ -442,6 +517,17 @@ export default function MapScreen() {
       locationWatcher.current.remove();
       locationWatcher.current = null;
     }
+
+    // --- NEW: Reset all route-related state ---
+    setRouteCoordinates([]);
+    setSafetySegments([]);
+    setOverallScore(0);
+    setShowSaferAlternative(false);
+    setAlternativeAttempt(0);
+    setNavigationSteps([]);
+    setStartLocation('');
+    setEndLocation('');
+    // --- END NEW ---
   }, []);
 
   // Effect for handling live navigation logic
@@ -506,7 +592,7 @@ export default function MapScreen() {
   // Helper to check if user is off-route
   const isUserOffRoute = (userCoords: Location.LocationObject['coords'], route: any[]) => {
     for (let i = 0; i < route.length - 1; i++) {
-      const dist = distanceToLine(userCoords, route[i], route[i+1]);
+      const dist = distanceToLine(userCoords, route[i], route[i + 1]);
       if (dist < 0.05) { // 50 meters threshold in km
         return false; // User is on-route
       }
@@ -515,7 +601,7 @@ export default function MapScreen() {
   };
 
   const distanceToLine = (p: any, v: any, w: any) => {
-    const l2 = (v.latitude - w.latitude)**2 + (v.longitude - w.longitude)**2;
+    const l2 = (v.latitude - w.latitude) ** 2 + (v.longitude - w.longitude) ** 2;
     if (l2 === 0) return calculateDistance(p.latitude, p.longitude, v.latitude, v.longitude);
     let t = ((p.latitude - v.latitude) * (w.latitude - v.latitude) + (p.longitude - v.longitude) * (w.longitude - v.longitude)) / l2;
     t = Math.max(0, Math.min(1, t));
@@ -541,18 +627,18 @@ export default function MapScreen() {
     // Generate a curved route between start and end with fewer points for better performance
     const points = [];
     const steps = 25; // Reduced from 50 to 25 for better performance
-    
+
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       // Add some curve to the route
       const curve = Math.sin(t * Math.PI) * (0.01 + attempt * 0.02); // More curve for alternatives
-      
+
       points.push({
         latitude: start.latitude + (end.latitude - start.latitude) * t + curve,
         longitude: start.longitude + (end.longitude - start.longitude) * t,
       });
     }
-    
+
     return points;
   }, []);
 
@@ -572,7 +658,7 @@ export default function MapScreen() {
     if (maneuver.includes('off-ramp')) return '↘️';
     if (maneuver.includes('straight')) return '⬆️';
     if (maneuver.includes('destination')) return '🏁';
-    
+
     // Default for other cases like 'keep-right', 'keep-left'
     if (maneuver.includes('right')) return '↗️';
     if (maneuver.includes('left')) return '↖️';
@@ -682,7 +768,7 @@ export default function MapScreen() {
                     <Text style={styles.modalSubtitle}>Get turn-by-turn navigation with safety insights</Text>
                   </View>
                 </View>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.closeButton}
                   onPress={() => setShowRouteInput(false)}
                 >
@@ -708,8 +794,8 @@ export default function MapScreen() {
                         value={startLocation}
                         onChangeText={setStartLocation}
                       />
-                      <TouchableOpacity 
-                        onPress={useCurrentLocation} 
+                      <TouchableOpacity
+                        onPress={useCurrentLocation}
                         style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
                       >
                         <Text style={styles.actionButtonText}>📍</Text>
@@ -718,9 +804,9 @@ export default function MapScreen() {
                     {user && startSuggestionsMemo.length > 0 && (
                       <ScrollView style={styles.enhancedSuggestionsList} nestedScrollEnabled={true}>
                         {startSuggestionsMemo.slice(0, 3).map((s) => (
-                          <TouchableOpacity 
-                            key={s.id} 
-                            style={styles.enhancedSuggestionItem} 
+                          <TouchableOpacity
+                            key={s.id}
+                            style={styles.enhancedSuggestionItem}
                             onPress={() => setStartLocation(s.address_text)}
                           >
                             <View style={styles.suggestionContent}>
@@ -750,8 +836,8 @@ export default function MapScreen() {
                         value={endLocation}
                         onChangeText={setEndLocation}
                       />
-                      <TouchableOpacity 
-                        onPress={() => saveAddress('end')} 
+                      <TouchableOpacity
+                        onPress={() => saveAddress('end')}
                         style={[styles.actionButton, { backgroundColor: colors.secondary + '20' }]}
                       >
                         <Text style={styles.actionButtonText}>⭐</Text>
@@ -760,9 +846,9 @@ export default function MapScreen() {
                     {user && endSuggestionsMemo.length > 0 && (
                       <ScrollView style={styles.enhancedSuggestionsList} nestedScrollEnabled={true}>
                         {endSuggestionsMemo.slice(0, 3).map((s) => (
-                          <TouchableOpacity 
-                            key={s.id} 
-                            style={styles.enhancedSuggestionItem} 
+                          <TouchableOpacity
+                            key={s.id}
+                            style={styles.enhancedSuggestionItem}
                             onPress={() => setEndLocation(s.address_text)}
                           >
                             <View style={styles.suggestionContent}>
@@ -824,7 +910,7 @@ export default function MapScreen() {
             colors={[colors.backgroundCard, colors.backgroundLight]}
             style={styles.safetyScoreGradient}
           >
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.closeBtn}
               onPress={() => setShowSaferAlternative(false)}
             >
@@ -850,13 +936,13 @@ export default function MapScreen() {
                       </Text>
                       <Text style={styles.scoreMax}>/100</Text>
                     </View>
-                    
+
                     <Text style={styles.safetyMessage}>
-                      {overallScore >= 70 
+                      {overallScore >= 70
                         ? '✅ This route is safe!'
                         : overallScore >= 40
-                        ? '⚠️ Use caution on this route'
-                        : '🚨 High-risk areas detected'}
+                          ? '⚠️ Use caution on this route'
+                          : '🚨 High-risk areas detected'}
                     </Text>
                   </>
                 ) : (
@@ -874,7 +960,7 @@ export default function MapScreen() {
                       </LinearGradient>
                     </TouchableOpacity>
                   )}
-                  
+
                   <TouchableOpacity onPress={startNavigation} style={styles.navigationButton}>
                     <LinearGradient colors={[colors.primary, colors.accent]} style={styles.startNavBtn}>
                       <Text style={styles.navButtonIcon}>🧿</Text>
@@ -907,7 +993,7 @@ export default function MapScreen() {
           transparent={true}
           onRequestClose={() => setSelectedSegment(null)}
         >
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.segmentModalOverlay}
             activeOpacity={1}
             onPress={() => setSelectedSegment(null)}
@@ -915,10 +1001,10 @@ export default function MapScreen() {
             <View style={styles.segmentInfoCard}>
               <Text style={styles.segmentTitle}>
                 {selectedSegment.safetyReason?.level === 'safe' ? '✅ Safe Area' :
-                 selectedSegment.safetyReason?.level === 'caution' ? '⚠️ Caution Area' :
-                 '🚨 Unsafe Area'}
+                  selectedSegment.safetyReason?.level === 'caution' ? '⚠️ Caution Area' :
+                    '🚨 Unsafe Area'}
               </Text>
-              
+
               <Text style={styles.segmentScore}>
                 Safety Score: {selectedSegment.actualScore}/100
               </Text>
@@ -1226,7 +1312,7 @@ const makeStyles = (colors: any) => StyleSheet.create({
     top: 10,
     right: 10,
     width: 30,
-    height: 30,
+    height: 30, // Give it a fixed height
     borderRadius: 15,
     backgroundColor: colors.danger,
     justifyContent: 'center',

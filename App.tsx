@@ -34,7 +34,6 @@ import { SOSProvider, useSOS } from './src/context/SOSContext';
 import { useShakeSOS } from './src/features/sos/useShakeSOS';
 import { initDB } from './src/services/sqlite';
 import { runStartupCleanup } from './src/utils/databaseCleanup';
-import NewsAnalyzerTester from './src/components/NewsAnalyzerTester';
 import SOSConfirmationModal from './src/components/SOSConfirmationModal';
 import NoContactsModal from './src/components/NoContactsModal'; // Import the new modal
 import { ProfileStackParamList } from './src/navigation/ProfileStack';
@@ -268,9 +267,6 @@ function HomeScreen({ navigation }: { navigation: any }) {
             </LinearGradient>
           </TouchableOpacity>
 
-          {/* News Analyzer Tester */}
-          <NewsAnalyzerTester />
-          
         </Animated.View>
       </ScrollView>
     </LinearGradient>

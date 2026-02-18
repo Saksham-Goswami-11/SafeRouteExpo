@@ -1,36 +1,58 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useState, useContext, ReactNode, useMemo } from 'react';
 
-export type SOSContextType = {
+/**
+ * Defines the shape of the SOS context data.
+ * This now includes state and functions for the SOS confirmation modal.
+ */
+export interface SOSContextType {
   enabled: boolean;
-  setEnabled: (v: boolean) => void;
-};
+  setEnabled: (enabled: boolean) => void;
+  isConfirmingSOS: boolean;
+  startSOSConfirmation: () => void;
+  cancelSOSConfirmation: () => void;
+  confirmSOS: () => void;
+}
 
+// Create the context with an undefined initial value.
 const SOSContext = createContext<SOSContextType | undefined>(undefined);
 
-export const SOSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [enabled, setEnabled] = useState<boolean>(true);
+/**
+ * The provider component that wraps parts of the app that need access to SOS state.
+ */
+export const SOSProvider = ({ children }: { children: ReactNode }) => {
+  // State for enabling/disabling the shake-to-SOS feature.
+  const [enabled, setEnabled] = useState(false);
+  
+  // State to control the visibility of the SOS confirmation modal.
+  const [isConfirmingSOS, setIsConfirmingSOS] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      const v = await AsyncStorage.getItem('sos_enabled');
-      if (v !== null) setEnabled(v === '1');
-    })();
-  }, []);
+  // Memoize the context value to prevent unnecessary re-renders of consumers.
+  const value = useMemo(() => ({
+    enabled,
+    setEnabled,
+    isConfirmingSOS,
+    // Function to show the confirmation modal.
+    startSOSConfirmation: () => setIsConfirmingSOS(true),
+    // Function to hide the modal if the user cancels.
+    cancelSOSConfirmation: () => setIsConfirmingSOS(false),
+    // Function to hide the modal after the SOS action is confirmed and completed.
+    confirmSOS: () => setIsConfirmingSOS(false),
+  }), [enabled, isConfirmingSOS]);
 
-  useEffect(() => {
-    AsyncStorage.setItem('sos_enabled', enabled ? '1' : '0');
-  }, [enabled]);
-
-  return (
-    <SOSContext.Provider value={{ enabled, setEnabled }}>
-      {children}
-    </SOSContext.Provider>
-  );
+  return <SOSContext.Provider value={value}>{children}</SOSContext.Provider>;
 };
 
-export const useSOS = () => {
-  const ctx = useContext(SOSContext);
-  if (!ctx) throw new Error('useSOS must be used within SOSProvider');
-  return ctx;
+/**
+ * Custom hook to easily access the SOS context.
+ * This hook ensures it's used within a SOSProvider.
+ */
+export const useSOS = (): SOSContextType => {
+  const context = useContext(SOSContext);
+  if (context === undefined) {
+    // This error is thrown if useSOS is used outside of a SOSProvider.
+    throw new Error('useSOS must be used within a SOSProvider');
+  }
+  // The defensive code in App.tsx is no longer strictly necessary
+  // but is good practice. We can now safely return the context.
+  return context;
 };

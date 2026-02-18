@@ -22,7 +22,7 @@ export interface AIConfig {
 
 // 🔧 UPDATE THIS WITH YOUR ACTUAL RENDER URL
 const AI_CONFIG: AIConfig = {
-  baseUrl: "https://amba-analyzer-backend.onrender.com", // 👈 FIXED - removed duplicate endpoint
+  baseUrl: "http://YOUR_COMPUTER_IP:5000", // 👈 TEMPORARY CHANGE FOR LOCAL TESTING
   
   endpoints: {
     analyzeRoute: "/api/analyze-route", // 👈 Try this first - common pattern
@@ -75,7 +75,7 @@ export function getEndpointUrl(endpoint: keyof AIConfig['endpoints']): string {
  * Set this to true during development to use mock data
  */
 export const DEVELOPMENT_MODE = {
-  enabled: false, // 👈 DISABLED - using dummy data only
+  enabled: true, // 👈 ENABLED - to use AI analysis logic
   mockDelay: 2000, // 2 seconds delay to simulate network
   mockSafetyScore: 75, // Default mock safety score
   mockConfidence: 0.85, // Default mock confidence

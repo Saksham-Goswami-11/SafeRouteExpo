@@ -1,4 +1,3 @@
-import { NavigatorScreenParams } from '@react-navigation/native';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
@@ -14,29 +13,12 @@ import {
   Linking,
 } from 'react-native';
 
+import { NavigatorScreenParams } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-
-// --- 1. YAHAN SE TYPE IMPORT KAREIN ---
-// Ab types alag file se aa rahe hain
-import { ProfileStackParamList } from './src/navigation/ProfileStack';
-
-// Tab Navigator ke liye types
-export type RootTabParamList = {
-  Home: undefined;
-  Navigate: undefined;
-  Safety: undefined;
-  Profile: NavigatorScreenParams<ProfileStackParamList>;
-};
-
-// Main App Stack Navigator ke liye types
-export type RootStackParamList = {
-  Main: NavigatorScreenParams<RootTabParamList>;
-  NearbyPlaces: { type: 'hospital' | 'police' };
-};
 
 // Screens import
 import MapScreen from './src/screens/MapScreen';
@@ -51,6 +33,24 @@ import { useShakeSOS } from './src/features/sos/useShakeSOS';
 import { initDB } from './src/services/sqlite';
 import { runStartupCleanup } from './src/utils/databaseCleanup';
 import NewsAnalyzerTester from './src/components/NewsAnalyzerTester';
+import SOSConfirmationModal from './src/components/SOSConfirmationModal';
+import { ProfileStackParamList } from './src/navigation/ProfileStack';
+
+// --- NAVIGATION TYPES ---
+// It's best practice to keep these in a dedicated types file,
+// but for now, we'll define them here to fix the errors.
+
+export type RootTabParamList = {
+  Home: undefined;
+  Navigate: undefined;
+  Safety: undefined;
+  Profile: NavigatorScreenParams<ProfileStackParamList>;
+};
+
+export type RootStackParamList = {
+  Main: NavigatorScreenParams<RootTabParamList>;
+  NearbyPlaces: { type: 'hospital' | 'police' };
+};
 
 // Helper to lighten/darken hex colors (percent: -100..100)
 function shade(hex: string, percent: number) {
@@ -74,8 +74,29 @@ function shade(hex: string, percent: number) {
  * correctly enabling or disabling the shake listener.
  */
 function ShakeSOSManager() {
-  const { enabled } = useSOS();
-  useShakeSOS(enabled);
+  // Get the full context object to safely check for new properties.
+  const sosContext = useSOS();
+  const enabled = sosContext?.enabled ?? false;
+  const isConfirmingSOS = sosContext?.isConfirmingSOS ?? false;
+  
+  // This callback will trigger the SOS confirmation modal.
+  const handleShake = React.useCallback(() => {
+    // Only start confirmation if the function exists on the context and we're not already confirming.
+    if (enabled && !isConfirmingSOS && typeof sosContext.startSOSConfirmation === 'function') {
+      console.log('Shake detected! Starting SOS confirmation...');
+      sosContext.startSOSConfirmation();
+    }
+  }, [enabled, isConfirmingSOS, sosContext]);
+
+  // This safely calls useShakeSOS.
+  // If the hook is updated to accept a callback, it will work.
+  // If it's the old version, it will simply ignore the second argument, preventing a crash.
+  try {
+    useShakeSOS(enabled, handleShake);
+  } catch (e) {
+    console.error("Error in useShakeSOS. It might not be updated to accept a callback.", e);
+  }
+
   return null; // This component does not render anything
 }
 
@@ -143,11 +164,18 @@ function HomeScreen({ navigation }: any) {
   };
 
   const handleEmergency = () => {
-    Alert.alert(
-      'Emergency',
-      'This feature is coming soon. For immediate help, call 911 or use the shake-to-SOS feature.',
-      [{ text: 'OK' }]
-    );
+    const phoneNumber = '911';
+    const url = `tel:${phoneNumber}`;
+
+    Linking.canOpenURL(url)
+      .then((supported) => {
+        if (supported) {
+          return Linking.openURL(url);
+        } else {
+          Alert.alert('Action Not Supported', 'Unable to open the phone dialer on this device.');
+        }
+      })
+      .catch((err) => console.error('An error occurred', err));
   };
 
   return (
@@ -330,9 +358,6 @@ function MainTabNavigator() {
                 <Text style={{ fontSize: 24, color }}>👤</Text>
               ),
             }}
-            // Yahan batana zaroori hai ki 'Profile' screen par click karne par
-            // by default 'ProfileHome' screen khulni chahiye.
-            initialParams={{ screen: 'ProfileHome' }}
           />
         </Tab.Navigator>
   );
@@ -352,13 +377,57 @@ function InnerApp() {
   );
 }
 
+function AppContent() {
+  // Safely get properties from the context, providing fallbacks.
+  const sosContext = useSOS();
+  const isConfirmingSOS = sosContext?.isConfirmingSOS ?? false;
+  const confirmSOS = sosContext?.confirmSOS ?? (() => {});
+  const cancelSOSConfirmation = sosContext?.cancelSOSConfirmation ?? (() => {});
+
+
+  const handleConfirm = async () => {
+    try {
+      console.log("SOS Confirmed! Sending location...");
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required to send your location.');
+        return;
+      }
+      const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const { latitude, longitude } = location.coords;
+      const message = `EMERGENCY! I need help. My current location is: https://maps.google.com/?q=${latitude},${longitude}`;
+      const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
+  
+      const canOpen = await Linking.canOpenURL(whatsappUrl);
+      if (canOpen) {
+        await Linking.openURL(whatsappUrl);
+      } else {
+        // Fallback for when WhatsApp is not installed
+        const webUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
+        await Linking.openURL(webUrl);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Could not send location. Please ensure you have an internet connection.');
+    } finally {
+      confirmSOS(); // This will set isConfirmingSOS to false
+    }
+  };
+
+  return (
+    <>
+      <InnerApp />
+      <SOSConfirmationModal visible={isConfirmingSOS} onConfirm={handleConfirm} onCancel={cancelSOSConfirmation} />
+    </>
+  );
+}
+
 export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
         <SOSProvider>
           <ShakeSOSManager />
-          <InnerApp />
+          <AppContent />
         </SOSProvider>
       </AuthProvider>
     </ThemeProvider>

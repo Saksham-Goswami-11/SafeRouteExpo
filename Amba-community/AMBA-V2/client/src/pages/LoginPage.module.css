@@ -1,0 +1,129 @@
+/* src/pages/LoginPage.module.css */
+.loginPage {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+
+  /* Navbar ki height (approx 80px) ko minus karo */
+  min-height: calc(100vh - 80px);
+  padding: 2rem;
+  padding-top: 4rem; /* Yeh extra space dega mobile par */
+}
+
+.loginContainer {
+  width: 100%;
+  max-width: 400px;
+  padding: 2.5rem;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 1rem; /* 16px */
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.07);
+}
+
+.title {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--foreground);
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.subtitle {
+  font-size: 1rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+}
+
+.footerText {
+  margin-top: 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.link {
+  color: var(--foreground);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin: 1.5rem 0; /* 24px upar-neeche */
+}
+
+/* "OR" ke dono taraf lines */
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--border);
+}
+
+.divider::before {
+  margin-right: 0.5em;
+}
+
+.divider::after {
+  margin-left: 0.5em;
+}
+
+/* Mobile par padding kam kar do */
+@media (max-width: 480px) {
+  .loginContainer {
+    padding: 2rem;
+  }
+  .loginPage {
+    padding: 1rem;
+    padding-top: 2rem;
+  }
+}
+/* src/pages/LoginPage.module.css (END MEIN ADD KARO) */
+
+.error {
+  color: #e53e3e; /* Red */
+  background-color: #ffebeb;
+  border: 1px solid #e53e3e;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  margin-bottom: 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.dark .error {
+  background-color: #3f1a1a;
+  color: #ffc4c4;
+}
+/* src/pages/LoginPage.module.css (END MEIN ADD KARO) */
+
+.forgotPassword {
+  display: flex;
+  justify-content: flex-end; /* Link ko right side bhej do */
+  margin-bottom: 1rem;
+  margin-top: -0.5rem; /* Password field ke thoda kareeb */
+}
+
+.forgotPassword .link {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.forgotPassword .link:hover {
+  color: var(--foreground);
+}

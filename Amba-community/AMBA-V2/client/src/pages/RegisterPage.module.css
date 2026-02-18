@@ -1,0 +1,143 @@
+/* src/pages/RegisterPage.module.css (COMPLETE CODE) */
+
+/* --- 1. Box Layout (Jo missing tha) --- */
+.registerPage {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: calc(100vh - 80px); 
+  padding: 2rem;
+  padding-top: 4rem; 
+}
+
+.registerContainer {
+  width: 100%;
+  max-width: 400px; /* Yeh box banayega */
+  padding: 2.5rem;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 1rem; /* 16px */
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.07);
+}
+
+/* --- 2. Text Alignment --- */
+.title {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--foreground);
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.subtitle {
+  font-size: 1rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+/* --- 3. Baaki ke Styles --- */
+.form {
+  display: flex;
+  flex-direction: column;
+}
+
+.footerText {
+  margin-top: 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.link {
+  color: var(--foreground);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+/* --- 4. Role Selector Styles --- */
+.roleSelector {
+  display: flex;
+  width: 100%;
+  background-color: var(--card-bg-secondary);
+  border-radius: 0.5rem;
+  padding: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.roleButton {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border: none;
+  background-color: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.9rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.roleButton.active {
+  background-color: var(--pill-bg);
+  color: var(--foreground);
+  box-shadow: var(--pill-shadow);
+}
+
+/* --- 5. Helper & Error Messages --- */
+.helperText {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background-color: var(--card-bg-secondary);
+  border-radius: 0.375rem;
+}
+
+.error {
+  color: #e53e3e; /* Red */
+  background-color: #ffebeb;
+  border: 1px solid #e53e3e;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  margin-bottom: 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.dark .error {
+  background-color: #3f1a1a;
+  color: #ffc4c4;
+}
+
+.success {
+  color: #2f855a; /* Green */
+  background-color: #f0fff4;
+  border: 1px solid #2f855a;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  margin-bottom: 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.dark .success {
+  background-color: #1c3027;
+  color: #c6f6d5;
+}
+
+/* --- 6. Mobile Responsive --- */
+@media (max-width: 480px) {
+  .registerContainer {
+    padding: 2rem;
+  }
+  .registerPage {
+    padding: 1rem;
+    padding-top: 2rem;
+  }
+}

@@ -1,0 +1,23 @@
+/* src/components/Button.module.css */
+.button {
+  width: 100%;
+  padding: 1rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--background); /* Dark background par white text, light par black */
+  background-color: var(--foreground);
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+
+  /* Smooth transition */
+  transition: all 0.2s ease-in-out;
+}
+
+.button:hover {
+  opacity: 0.8; /* Simple, premium hover effect */
+}
+
+.button:active {
+  transform: scale(0.98); /* Click par "press" effect */
+}

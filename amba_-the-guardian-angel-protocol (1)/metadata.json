@@ -1,0 +1,9 @@
+{
+  "name": "AMBA: The Guardian Angel Protocol",
+  "description": "A comprehensive women's safety ecosystem integrating proactive prevention, instant intervention, post-incident support, and community trust.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}

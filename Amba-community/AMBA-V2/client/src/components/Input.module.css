@@ -1,0 +1,25 @@
+/* src/components/Input.module.css */
+.input {
+  width: 100%;
+  padding: 1rem; /* Bada, premium padding */
+  font-size: 1rem;
+  color: var(--foreground);
+  background-color: var(--card-bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem; /* 8px rounded corners */
+  margin-bottom: 1rem; /* Fields ke beech space */
+
+  /* Smooth transition */
+  transition: all 0.2s ease-in-out;
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Focus (click) karne par premium feel */
+.input:focus {
+  outline: none;
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 2px var(--card-bg-secondary), 0 0 0 4px var(--foreground);
+}

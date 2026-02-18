@@ -1,0 +1,44 @@
+/* src/pages/HomePage.module.css */
+.homePage {
+  padding-top: 90px; /* Navbar height(70px) + Extra space */
+  min-height: 100vh;
+  background: var(--background);
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+.feedContainer {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  font-size: 2.2rem;
+  font-weight: 900;
+  letter-spacing: -1.5px;
+  margin: 0;
+  color: var(--foreground);
+}
+
+.postList {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+@media (max-width: 600px) {
+  .header {
+    flex-direction: row; /* Mobile pe bhi side-by-side rakho ya column */
+    gap: 1rem;
+  }
+  .title { font-size: 1.8rem; }
+}

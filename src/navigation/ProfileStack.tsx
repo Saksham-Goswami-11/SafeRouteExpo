@@ -6,17 +6,9 @@ import SignupScreen from '../screens/auth/SignupScreen';
 import EditProfileScreen from '../screens/profile/EditProfileScreen';
 import EmergencyContactsScreen from '../screens/profile/EmergencyContactsScreen';
 import SavedAddressesScreen from '../screens/profile/SavedAddressesScreen';
+import AudioEvidenceScreen from '../screens/AudioEvidenceScreen';
 
-// ProfileStack ke andar ki screens aur unke params
-export type ProfileStackParamList = {
-  ProfileHome: undefined;
-  Login: undefined;
-  Signup: undefined;
-  EditProfile: undefined;
-  EmergencyContacts: undefined;
-  // SavedAddresses screen ko yahan define karein
-  SavedAddresses: undefined;
-};
+import { ProfileStackParamList } from './types';
 
 const Stack = createStackNavigator<ProfileStackParamList>();
 
@@ -29,6 +21,7 @@ export default function ProfileStack() {
       <Stack.Screen name="EditProfile" component={EditProfileScreen} />
       <Stack.Screen name="EmergencyContacts" component={EmergencyContactsScreen} />
       <Stack.Screen name="SavedAddresses" component={SavedAddressesScreen} />
+      <Stack.Screen name="AudioEvidence" component={AudioEvidenceScreen} />
     </Stack.Navigator>
   );
 }

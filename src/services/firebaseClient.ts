@@ -1,162 +1,27 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  User,
-  authenticateUser,
-  createUser as createUserInDB,
-  createSession,
-  validateSession,
-  invalidateSession,
-  getUserByEmail
-} from './sqlite';
+import { initializeApp } from "firebase/app";
+// @ts-ignore
+import { getAuth, initializeAuth, getReactNativePersistence } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
+import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
-// Storage key for session token
-const SESSION_TOKEN_KEY = 'saferoute_session_token';
-
-// Current user state
-let currentUser: User | null = null;
-let authStateListeners: Array<(user: User | null) => void> = [];
-
-// Notify all listeners about auth state changes
-function notifyAuthStateChange(user: User | null) {
-  currentUser = user;
-  authStateListeners.forEach(callback => callback(user));
-}
-
-// Initialize auth state from stored session
-export async function initializeAuth(): Promise<void> {
-  try {
-    const token = await AsyncStorage.getItem(SESSION_TOKEN_KEY);
-    if (token) {
-      const user = await validateSession(token);
-      if (user) {
-        notifyAuthStateChange(user);
-      } else {
-        // Invalid session, clean up
-        await AsyncStorage.removeItem(SESSION_TOKEN_KEY);
-      }
-    }
-  } catch (error) {
-    console.warn('Error initializing auth:', error);
-  }
-}
-
-// Auth functions compatible with Firebase API (now using SQLite backend)
-export const onAuthStateChanged = (_auth: any, callback: (user: User | null) => void) => {
-  authStateListeners.push(callback);
-  // Immediately call with current user
-  callback(currentUser);
-
-  // Return unsubscribe function
-  return () => {
-    authStateListeners = authStateListeners.filter(listener => listener !== callback);
-  };
+const firebaseConfig = {
+  apiKey: "AIzaSyD1546iT67TLA8_uPM_3z0uUJaR5XICqsY",
+  authDomain: "amba-safety.firebaseapp.com",
+  projectId: "amba-safety",
+  storageBucket: "amba-safety.firebasestorage.app",
+  messagingSenderId: "927322494760",
+  appId: "1:927322494760:web:cb273548f5b094aa05a21d",
+  measurementId: "G-JW376JN11V"
 };
 
-export const signInWithEmailAndPassword = async (_auth: any, email: string, password: string) => {
-  try {
-    const user = await authenticateUser(email, password);
-    if (!user) {
-      throw new Error('Invalid email or password');
-    }
+// Initialize App
+const app = initializeApp(firebaseConfig);
 
-    const token = await createSession(user.id);
-    await AsyncStorage.setItem(SESSION_TOKEN_KEY, token);
-
-    notifyAuthStateChange(user);
-    return { user };
-  } catch (error) {
-    throw error;
-  }
-};
-
-export const createUserWithEmailAndPassword = async (_auth: any, email: string, password: string, fullName?: string) => {
-  try {
-    // Check if user already exists
-    const existingUser = await getUserByEmail(email);
-    if (existingUser) {
-      throw new Error('Email already in use');
-    }
-
-    const user = await createUserInDB(email, password, fullName || email.split('@')[0]);
-    const token = await createSession(user.id);
-    await AsyncStorage.setItem(SESSION_TOKEN_KEY, token);
-
-    notifyAuthStateChange(user);
-    return { user };
-  } catch (error) {
-    throw error;
-  }
-};
-
-export const signOut = async (_auth?: any) => {
-  try {
-    const token = await AsyncStorage.getItem(SESSION_TOKEN_KEY);
-    if (token) {
-      await invalidateSession(token);
-      await AsyncStorage.removeItem(SESSION_TOKEN_KEY);
-    }
-    notifyAuthStateChange(null);
-  } catch (error) {
-    console.warn('Error signing out:', error);
-  }
-};
-
-export const signInWithGoogle = async (userInfo?: { email: string; name: string; photo?: string }) => {
-  try {
-    // Use real user info if provided, otherwise fallback to mock (or error)
-    const email = userInfo?.email || 'google_user@example.com';
-    const password = 'social_login_password'; // Placeholder
-    const fullName = userInfo?.name || 'Google User';
-
-    // Check if user exists, if not create
-    let user = await getUserByEmail(email);
-    if (!user) {
-      user = await createUserInDB(email, password, fullName);
-    }
-
-    const token = await createSession(user.id);
-    await AsyncStorage.setItem(SESSION_TOKEN_KEY, token);
-
-    notifyAuthStateChange(user);
-    return { user };
-  } catch (error) {
-    throw error;
-  }
-};
-
-export const signInWithFacebook = async (userInfo?: { email: string; name: string; photo?: string }) => {
-  try {
-    // Use real user info if provided
-    const email = userInfo?.email || 'facebook_user@example.com';
-    const password = 'social_login_password';
-    const fullName = userInfo?.name || 'Facebook User';
-
-    // Check if user exists, if not create
-    let user = await getUserByEmail(email);
-    if (!user) {
-      user = await createUserInDB(email, password, fullName);
-    }
-
-    const token = await createSession(user.id);
-    await AsyncStorage.setItem(SESSION_TOKEN_KEY, token);
-
-    notifyAuthStateChange(user);
-    return { user };
-  } catch (error) {
-    throw error;
-  }
-};
-
-export const getCurrentUser = () => currentUser;
-
-// For compatibility with existing code
-export const getAuthInstance = () => ({
-  currentUser,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut
+// Initialize Auth with Persistence (Critical for maintaining login state)
+const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(ReactNativeAsyncStorage)
 });
 
-// Initialize auth when module loads
-initializeAuth();
+const db = getFirestore(app);
+
+export { auth, db };

@@ -1,6 +1,7 @@
-import { EXPO_PUBLIC_GOOGLE_PLACES_API_KEY, GNEWS_API_KEY } from '@env';
+// Access environment variables directly from process.env
+const { EXPO_PUBLIC_GOOGLE_PLACES_API_KEY, EXPO_PUBLIC_GNEWS_API_KEY } = process.env;
 
-const NEWS_API_KEY = GNEWS_API_KEY; // Use environment variable
+const NEWS_API_KEY = EXPO_PUBLIC_GNEWS_API_KEY; // Use environment variable
 const NEWS_API_URL = 'https://newsapi.org/v2/everything';
 
 const SENTIMENT_API_URL = 'https://language.googleapis.com/v1/documents:analyzeSentiment';
@@ -30,7 +31,7 @@ export const getNewsForLocation = async (lat: number, lon: number) => {
     }
 
     const url = `${NEWS_API_URL}?q=${encodeURIComponent(query)}&apiKey=${NEWS_API_KEY}&pageSize=5`;
-    
+
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`News API request failed: ${response.statusText}`);

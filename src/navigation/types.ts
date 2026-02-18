@@ -6,9 +6,12 @@ import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 
 export type ProfileStackParamList = {
   ProfileHome: undefined;
+  Login: undefined;
+  Signup: undefined;
   EditProfile: undefined;
   EmergencyContacts: undefined;
   SavedAddresses: undefined;
+  AudioEvidence: undefined;
 };
 
 export type RootTabParamList = {

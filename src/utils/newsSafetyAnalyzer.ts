@@ -1,8 +1,7 @@
-import * as Location from 'expo-location';
-import { GNEWS_API_KEY } from '@env';
 
-// Securely access the GNews API key from the .env file
-const NEWS_API_KEY = GNEWS_API_KEY;
+import * as ExpoLocation from 'expo-location';
+
+const NEWS_API_KEY = process.env.EXPO_PUBLIC_GNEWS_API_KEY;
 const NEWS_API_ENDPOINT = 'https://newsapi.org/v2/everything';
 
 interface NewsArticle {
@@ -123,7 +122,7 @@ function extractLocationsFromText(text: string): string[] {
   const locations: string[] = [];
   for (const pattern of locationPatterns) {
     const matches = text.matchAll(pattern);
-    for (const match of matches) { 
+    for (const match of matches) {
       locations.push(match[1].trim());
     }
   }
@@ -147,7 +146,7 @@ export async function analyzeAreaSafetyFromNews(
 
   try {
     // 1. Reverse geocode to get the city name
-    const addresses = await Location.reverseGeocodeAsync({ latitude, longitude });
+    const addresses = await ExpoLocation.reverseGeocodeAsync({ latitude, longitude });
     if (!Array.isArray(addresses) || addresses.length === 0 || !addresses[0].city) {
       console.warn("Could not find city for the given coordinates.");
       return { safetyScore: 100, contributingHeadlines: [] }; // Safe if no city found
@@ -172,7 +171,7 @@ export async function analyzeAreaSafetyFromNews(
           const potentialLocations = extractLocationsFromText(article.content);
           for (const locName of potentialLocations) {
             try {
-              const geocodedLocations = await Location.geocodeAsync(locName);
+              const geocodedLocations = await ExpoLocation.geocodeAsync(locName);
               for (const geoLoc of geocodedLocations) {
                 const distance = getDistanceInKm(latitude, longitude, geoLoc.latitude, geoLoc.longitude);
                 if (distance <= radiusInKm) {

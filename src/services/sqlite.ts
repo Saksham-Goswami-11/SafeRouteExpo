@@ -79,6 +79,70 @@ export async function initDB() {
     longitude REAL,
     created_at INTEGER
   );`);
+
+  // --- MIGRATIONS ---
+  // Upgrade emergency_contacts with new columns for "Nano Banana Pro" UI
+  const migrationCols = [
+    { name: 'avatar_uri', def: 'TEXT' },
+    { name: 'relationship_label', def: 'TEXT' },
+    { name: 'is_active_simulated', def: 'INTEGER DEFAULT 0' }
+  ];
+
+  for (const col of migrationCols) {
+    try {
+      await exec(`ALTER TABLE emergency_contacts ADD COLUMN ${col.name} ${col.def};`);
+    } catch (e) {
+      // Column likely already exists, ignore error
+      // console.log(`Column ${col.name} already exists or could not be added.`);
+    }
+  }
+
+  // --- NEW TABLES ---
+  await exec(`CREATE TABLE IF NOT EXISTS alert_history (
+    id TEXT PRIMARY KEY,
+    type TEXT, -- 'SOS_SENT', 'FALSE_ALARM', 'SYSTEM_TEST'
+    timestamp INTEGER,
+    location_snapshot TEXT, -- JSON string of {latitude, longitude}
+    is_synced INTEGER DEFAULT 0
+  );`);
+
+  await exec(`CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );`);
+
+  await exec(`CREATE TABLE IF NOT EXISTS audio_logs (
+    id TEXT PRIMARY KEY,
+    uri TEXT NOT NULL,
+    timestamp INTEGER,
+    duration TEXT
+  );`);
+  console.log("LOG Table: audio_logs checked/created");
+
+  // Insert default settings if they don't exist
+  await exec(`INSERT OR IGNORE INTO app_settings (key, value) VALUES ('ghost_mode', 'false');`);
+
+  // Verify schema after updates
+  await verifySchema();
+}
+
+/**
+ * Helper to verify schema changes by logging table info to console.
+ * Call this manually or from initDB during development.
+ */
+export async function verifySchema() {
+  console.log('--- Verifying Database Schema ---');
+  try {
+    const tables = ['emergency_contacts', 'alert_history', 'app_settings'];
+    for (const table of tables) {
+      const info = await query(`PRAGMA table_info(${table})`);
+      console.log(`Table: ${table}`);
+      console.log(info.map((col: any) => ` - ${col.name} (${col.type})`).join('\n'));
+    }
+  } catch (error) {
+    console.error('Error verifying schema:', error);
+  }
+  console.log('--- Schema Verification Complete ---');
 }
 
 export async function query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
@@ -151,7 +215,7 @@ export async function authenticateUser(email: string, password: string): Promise
     'SELECT * FROM users WHERE email = ? AND password_hash = ?',
     [email.toLowerCase(), passwordHash]
   );
-  
+
   return users.length > 0 ? users[0] : null;
 }
 
@@ -200,4 +264,35 @@ export async function invalidateSession(token: string): Promise<void> {
 export async function getUserByEmail(email: string): Promise<User | null> {
   const users = await query<User>('SELECT * FROM users WHERE email = ?', [email.toLowerCase()]);
   return users.length > 0 ? users[0] : null;
+}
+
+export async function addEmergencyContact(contact: { id: string, name: string, phone: string, userId: string }) {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT OR REPLACE INTO emergency_contacts (id, user_id, name, phone, created_at) VALUES (?, ?, ?, ?, ?)`,
+    [contact.id, contact.userId, contact.name, contact.phone, Date.now()]
+  );
+}
+
+export async function getEmergencyContacts(userId: string): Promise<{ name: string, phone: string }[]> {
+  const contacts = await query<{ name: string, phone: string }>(
+    'SELECT name, phone FROM emergency_contacts WHERE user_id = ?',
+    [userId]
+  );
+  return contacts;
+}
+
+
+export async function saveAudioLog(log: { id: string, uri: string, timestamp: number, duration: string }) {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT INTO audio_logs (id, uri, timestamp, duration) VALUES (?, ?, ?, ?)`,
+    [log.id, log.uri, log.timestamp, log.duration]
+  );
+}
+
+export async function getAudioLogs() {
+  return await query<{ id: string, uri: string, timestamp: number, duration: string }>(
+    'SELECT * FROM audio_logs ORDER BY timestamp DESC'
+  );
 }

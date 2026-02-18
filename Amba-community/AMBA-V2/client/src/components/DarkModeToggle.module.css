@@ -1,0 +1,40 @@
+/* src/components/DarkModeToggle.module.css */
+.toggleButton {
+  background-color: var(--card-bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  
+  /* Font ko bold aur text ko centered rakho */
+  font-size: 1rem; /* 16px */
+  font-weight: 700;
+  
+  cursor: pointer;
+  transition: all 0.3s ease;
+  
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  
+  /* Yeh 'key' ke saath milkar ek "pop" effect dega */
+  animation: pop-in 0.3s ease;
+}
+
+.toggleButton:hover {
+  border-color: var(--foreground);
+  transform: scale(1.1);
+}
+
+/* Chhota sa "pop" animation jab state change ho */
+@keyframes pop-in {
+  from {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}

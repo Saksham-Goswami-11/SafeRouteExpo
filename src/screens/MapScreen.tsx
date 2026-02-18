@@ -10,84 +10,51 @@ import {
   ScrollView,
   ActivityIndicator,
   Dimensions,
+  StatusBar,
+  Switch,
   Platform,
+  FlatList,
+  Keyboard,
+  Linking, // Added for external maps
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { BlurView } from 'expo-blur';
+import { Ionicons } from '@expo/vector-icons';
+import { Target, Navigation, MapPin } from 'lucide-react-native';
+import Animated, { FadeIn, FadeInDown, SlideInUp } from 'react-native-reanimated';
 import { useTheme } from '../context/ThemeContext';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Callout } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafetySegment } from '../utils/safetyAnalysis';
 import { useAuth } from '../context/AuthContext';
 import { fetchSavedAddresses, SavedAddress, addSavedAddress } from '../services/addressService';
-import { analyzeAllRoutes } from '../utils/routeAnalysis';
 import { aiSafetyAnalyzer, calculateAIOverallSafetyScore } from '../utils/aiSafetyAnalyzer';
 
-// --- REAL ROUTING INTEGRATION ---
 // IMPORTANT: Add your Google Maps API Key here
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 const { width, height } = Dimensions.get('window');
 
-// Colors come from ThemeContext 
-
-// Dark map style
-const darkMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#1A1A2E' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#242f3e' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
-  {
-    featureType: 'administrative.locality',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#d59563' }],
-  },
-  {
-    featureType: 'road',
-    elementType: 'geometry',
-    stylers: [{ color: '#38414e' }],
-  },
-  {
-    featureType: 'road',
-    elementType: 'geometry.stroke',
-    stylers: [{ color: '#212a37' }],
-  },
-  {
-    featureType: 'road',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#9ca5b3' }],
-  },
+// --- Custom Dark Map Style (Stealth Luxury) ---
+const mapCustomStyle = [
+  { "elementType": "geometry", "stylers": [{ "color": "#212121" }] },
+  { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
+  { "elementType": "labels.text.fill", "stylers": [{ "color": "#757575" }] },
+  { "elementType": "labels.text.stroke", "stylers": [{ "color": "#212121" }] },
+  { "featureType": "administrative", "elementType": "geometry", "stylers": [{ "color": "#757575" }] },
+  { "featureType": "poi", "elementType": "labels.text.fill", "stylers": [{ "color": "#757575" }] },
+  { "featureType": "road", "elementType": "geometry.fill", "stylers": [{ "color": "#2c2c2c" }] },
+  { "featureType": "road.highway", "elementType": "geometry", "stylers": [{ "color": "#3c3c3c" }] },
+  { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#000000" }] }
 ];
 
-// Helper to decode Google's encoded polyline strings
-const decodePolyline = (t: string) => {
-  let points = [];
-  let index = 0, len = t.length;
-  let lat = 0, lng = 0;
-  while (index < len) {
-    let b, shift = 0, result = 0;
-    do {
-      b = t.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
-    lat += dlat;
-    shift = 0;
-    result = 0;
-    do {
-      b = t.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
-    lng += dlng;
-    points.push([lat / 1e5, lng / 1e5]);
-  }
-  return points;
-};
-
 export default function MapScreen() {
-  const { colors, darkMode } = useTheme();
+  const { colors } = useTheme();
   const mapRef = useRef<MapView>(null);
+  const navigation = useNavigation();
+
+  // --- STATE ---
   const [region, setRegion] = useState({
     latitude: 28.6139,
     longitude: 77.2090,
@@ -99,6 +66,9 @@ export default function MapScreen() {
   const [endLocation, setEndLocation] = useState('');
   const [currentLocation, setCurrentLocation] = useState<any>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<any[]>([]);
+  const [analyzedRoutes, setAnalyzedRoutes] = useState<any[]>([]);
+  const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
+  const [suggestions, setSuggestions] = useState<any[]>([]); // For Autocomplete
   const [safetySegments, setSafetySegments] = useState<SafetySegment[]>([]);
   const [overallScore, setOverallScore] = useState(0);
   const [showSaferAlternative, setShowSaferAlternative] = useState(false);
@@ -106,37 +76,69 @@ export default function MapScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [showRouteInput, setShowRouteInput] = useState(false);
   const [selectedSegment, setSelectedSegment] = useState<SafetySegment | null>(null);
+  const [safetyHotspots, setSafetyHotspots] = useState<any[]>([]);
+
+  // Helper: Open External Maps
+  const openMap = (lat: number, lng: number, label: string) => {
+    const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+    const latLng = `${lat},${lng}`;
+    const url = Platform.select({
+      ios: `${scheme}${label}@${latLng}`,
+      android: `${scheme}${latLng}(${label})`
+    });
+    if (url) Linking.openURL(url);
+  };
+
+
+  // --- USER DATA MAPPING (For Request Compatibility) ---
+  // Mapping existing complex states to simple names requested by user
+  // const [allRoutes, setAllRoutes] = ... (This maps to parsed logic in traceRoute)
+  const [allRoutes, setAllRoutes] = useState<any[]>([]);
+
+  // LOD State
+  const [allSafetyMarkers, setAllSafetyMarkers] = useState<any[]>([]);
+  const [visibleSafetyMarkers, setVisibleSafetyMarkers] = useState<any[]>([]);
+  const [isZoomedOut, setIsZoomedOut] = useState(true); // Default to city view
+
+  // Safety Filters
+  const [showPolice, setShowPolice] = useState(true);
+  const [showHospitals, setShowHospitals] = useState(true);
+
   const { user } = useAuth();
-  const [isSafetyCardMinimized, setIsSafetyCardMinimized] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
-  const [startSuggestions, setStartSuggestions] = useState<SavedAddress[]>([]);
-  const [endSuggestions, setEndSuggestions] = useState<SavedAddress[]>([]);
+
+  // Ghost Mode
+  const [isGhostMode, setIsGhostMode] = useState(false);
+  const [currentAddressLabel, setCurrentAddressLabel] = useState("Locating...");
 
   // Navigation states
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [navigationSteps, setNavigationSteps] = useState<any[]>([]);
+  const [selectedRouteLeg, setSelectedRouteLeg] = useState<any>(null);
+  const [navStats, setNavStats] = useState({ duration: '', distance: '', arrivalTime: '' });
   const [distanceToNext, setDistanceToNext] = useState(0);
   const [estimatedTime, setEstimatedTime] = useState(0);
   const locationWatcher = useRef<Location.LocationSubscription | null>(null);
   const [userLocation, setUserLocation] = useState<Location.LocationObject | null>(null);
   const [isOffRoute, setIsOffRoute] = useState(false);
 
-  const styles = makeStyles(colors);
+  // --- EFFECTS ---
 
-  // Request location permission and get current location
+  // Stop watchers on unmount
   useEffect(() => {
-    // Stop any existing watchers when the component unmounts
     return () => {
       locationWatcher.current?.remove();
     };
   }, []);
 
+  // Request location permission and get current location
   useEffect(() => {
     (async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location permission is required for navigation');
+        Alert.alert('Permission Denied', 'Location permission is required.');
+        setCurrentAddressLabel("Location Access Denied");
         return;
       }
 
@@ -150,6 +152,22 @@ export default function MapScreen() {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
       });
+
+      // Reverse Geocode for HUD
+      try {
+        const addr = await Location.reverseGeocodeAsync({
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        });
+        if (addr && addr.length > 0) {
+          const a = addr[0];
+          setCurrentAddressLabel(`${a.street || a.name || ''}, ${a.city}`);
+        } else {
+          setCurrentAddressLabel(`${location.coords.latitude.toFixed(4)}, ${location.coords.longitude.toFixed(4)}`);
+        }
+      } catch (e) {
+        setCurrentAddressLabel("Unknown Location");
+      }
 
     })();
   }, []);
@@ -170,22 +188,8 @@ export default function MapScreen() {
     })();
   }, [user?.id]);
 
-  // Memoized suggestions to avoid recalculation on every render
-  const startSuggestionsMemo = useMemo(() => {
-    const q = startLocation.toLowerCase().trim();
-    return q ? savedAddresses.filter(a =>
-      a.label.toLowerCase().includes(q) ||
-      a.address_text.toLowerCase().includes(q)
-    ).slice(0, 5) : savedAddresses.slice(0, 5);
-  }, [startLocation, savedAddresses]);
 
-  const endSuggestionsMemo = useMemo(() => {
-    const q = endLocation.toLowerCase().trim();
-    return q ? savedAddresses.filter(a =>
-      a.label.toLowerCase().includes(q) ||
-      a.address_text.toLowerCase().includes(q)
-    ).slice(0, 5) : savedAddresses.slice(0, 5);
-  }, [endLocation, savedAddresses]);
+  // --- LOGIC: SAVED ADDRESSES & GEOCODING ---
 
   // Save input as saved address (if logged in)
   const saveAddress = async (which: 'start' | 'end') => {
@@ -215,7 +219,6 @@ export default function MapScreen() {
     }
   };
 
-  // Optimized current location usage
   const useCurrentLocation = useCallback(async () => {
     try {
       if (currentLocation) {
@@ -230,7 +233,6 @@ export default function MapScreen() {
     }
   }, [currentLocation]);
 
-  // Geocode address to coordinates
   const geocodeAddress = async (address: string) => {
     try {
       const result = await Location.geocodeAsync(address);
@@ -243,8 +245,6 @@ export default function MapScreen() {
     } catch (error) {
       console.log('Geocoding error:', error);
     }
-
-    // Try to parse as coordinates
     const coordMatch = address.match(/^(-?\d+\.?\d*),\s*(-?\d+\.?\d*)$/);
     if (coordMatch) {
       return {
@@ -252,86 +252,210 @@ export default function MapScreen() {
         longitude: parseFloat(coordMatch[2]),
       };
     }
-
     return null;
   };
 
-  const generateRoute = useCallback(async () => {
-    if (!startLocation || !endLocation) {
+  const decodePolyline = (t: string) => {
+    let points = [];
+    let index = 0, len = t.length;
+    let lat = 0, lng = 0;
+    while (index < len) {
+      let b, shift = 0, result = 0;
+      do {
+        b = t.charCodeAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+      shift = 0;
+      result = 0;
+      do {
+        b = t.charCodeAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+      points.push([lat / 1e5, lng / 1e5]);
+    }
+    return points;
+  };
+
+  // --- LOGIC: AUTOCOMPLETE ---
+
+  const fetchSuggestions = async (query: string) => {
+    setEndLocation(query);
+    if (query.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    try {
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${query}&key=${GOOGLE_MAPS_API_KEY}&components=country:in`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.status === 'OK') {
+        setSuggestions(json.predictions);
+      }
+    } catch (e) {
+      console.log("Autocomplete error:", e);
+    }
+  };
+
+  const handleSelectPlace = async (placeId: string, description: string) => {
+    Keyboard.dismiss();
+    setEndLocation(description);
+    setSuggestions([]);
+
+    let startCoords = null;
+    // Fix: currentLocation has flat structure { latitude, longitude }
+    if (currentLocation) {
+      startCoords = {
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude
+      };
+      if (!startLocation) {
+        setStartLocation(`${startCoords.latitude}, ${startCoords.longitude}`);
+      }
+    } else if (userLocation && userLocation.coords) {
+      startCoords = {
+        latitude: userLocation.coords.latitude,
+        longitude: userLocation.coords.longitude
+      };
+      if (!startLocation) {
+        setStartLocation(`${startCoords.latitude}, ${startCoords.longitude}`);
+      }
+    }
+
+    try {
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=geometry&key=${GOOGLE_MAPS_API_KEY}`;
+      const res = await fetch(url);
+      const json = await res.json();
+
+      if (json.status === 'OK' && json.result.geometry) {
+        const loc = json.result.geometry.location;
+        const endCoords = { latitude: loc.lat, longitude: loc.lng };
+
+        if (mapRef.current) {
+          mapRef.current.animateToRegion({
+            latitude: loc.lat,
+            longitude: loc.lng,
+            latitudeDelta: 0.05,
+            longitudeDelta: 0.05
+          });
+        }
+
+        console.log("📍 Destination selected, fetching route...");
+        // generateRoute(startCoords, endCoords); <--- OLD
+        traceRoute(startCoords, endCoords); // <--- NEW LINK
+      }
+    } catch (e) {
+      console.log("Place Details error:", e);
+    }
+  };
+
+
+  // --- LOGIC: ROUTING ---
+
+  const generateRoute = useCallback(async (manualStartCoords?: any, manualEndCoords?: any) => {
+    // If manual coords not provided, check string inputs
+    if ((!manualStartCoords && !startLocation) || (!manualEndCoords && !endLocation)) {
       Alert.alert('Error', 'Please enter both start and end locations');
       return;
     }
 
-    console.log('🤖 Starting new safety analysis workflow...');
     setIsLoading(true);
 
-    const start = await geocodeAddress(startLocation);
-    const end = await geocodeAddress(endLocation);
+    let start = manualStartCoords;
+    if (!start) {
+      start = await geocodeAddress(startLocation);
+    }
+
+    let end = manualEndCoords;
+    if (!end) {
+      end = await geocodeAddress(endLocation);
+    }
 
     if (!start || !end) {
-      Alert.alert('Error', 'Could not find one or both locations. Please check the addresses.');
+      Alert.alert('Error', 'Could not find one or both locations.');
       setIsLoading(false);
       return;
     }
 
-    let routePoints: { latitude: number; longitude: number; }[] = [];
-
     try {
       const mode = 'driving';
-      // Always request alternatives to find the safest path
       const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${start.latitude},${start.longitude}&destination=${end.latitude},${end.longitude}&key=${GOOGLE_MAPS_API_KEY}&mode=${mode}&alternatives=true`;
 
       const res = await fetch(url);
       const json = await res.json();
 
-      if (json.status !== 'OK') {
-        let errorMessage = 'Could not find a route.';
-        if (json.status === 'ZERO_RESULTS') errorMessage = 'No route found.';
-        Alert.alert('No Route Found', errorMessage);
+      if (json.status !== 'OK' || !json.routes) {
+        Alert.alert('Route Error', 'Could not find a route.');
         setIsLoading(false);
         return;
       }
 
-      // Analyze all routes to find the safest one
+      console.log(`🛣️ ${json.routes.length} number of routes found`);
+
       const routes = json.routes;
-      let bestRoute = routes[0];
-      let bestScore = -1;
-      let bestSegments: SafetySegment[] = [];
-      let bestPoints: any[] = [];
 
-      console.log(`Found ${routes.length} routes. Analyzing safety...`);
+      let processedRoutes = [];
+      let maxScore = -1;
+      let maxScoreIndex = 0;
 
-      for (const route of routes) {
+      // Analyze all routes
+      for (let i = 0; i < routes.length; i++) {
+        const route = routes[i];
         const points = decodePolyline(route.overview_polyline.points);
         const mappedPoints = points.map(point => ({
           latitude: point[0],
           longitude: point[1],
         }));
 
-        // Analyze this route
         const segments = await aiSafetyAnalyzer.analyzeRouteSegments(mappedPoints, false);
         const score = calculateAIOverallSafetyScore(segments);
 
-        console.log(`Route score: ${score}`);
+        processedRoutes.push({
+          route: route,
+          points: mappedPoints,
+          segments: segments,
+          score: score,
+          leg: route.legs[0]
+        });
 
-        if (score > bestScore) {
-          bestScore = score;
-          bestRoute = route;
-          bestSegments = segments;
-          bestPoints = mappedPoints;
+        if (score > maxScore) {
+          maxScore = score;
+          maxScoreIndex = i;
         }
       }
 
-      // Use the best route
-      setRouteCoordinates(bestPoints);
-      setNavigationSteps(bestRoute.legs[0].steps);
-      setSafetySegments(bestSegments);
-      setOverallScore(bestScore);
+      setAnalyzedRoutes(processedRoutes);
+      setSelectedRouteIndex(maxScoreIndex);
+
+      // Set initial state to the best route
+      const best = processedRoutes[maxScoreIndex];
+      setRouteCoordinates(best.points);
+      setNavigationSteps(best.route.legs[0].steps);
+      setSelectedRouteLeg(best.route.legs[0]);
+      setSafetySegments(best.segments);
+      setOverallScore(best.score);
       setShowSaferAlternative(true);
 
-      // Fit map
+      // --- NEW: Capture Safety Hotspots directly ---
+      const hotspots: any[] = [];
+      best.segments.forEach(seg => {
+        if (seg.safetyFactors?.police) {
+          hotspots.push({ ...seg.safetyFactors.police, type: 'police' });
+        }
+        if (seg.safetyFactors?.hospital) {
+          hotspots.push({ ...seg.safetyFactors.hospital, type: 'hospital' });
+        }
+      });
+      setSafetyHotspots(hotspots);
+      console.log("🔥 Safety Hotspots Found:", hotspots.length);
+
       if (mapRef.current) {
-        mapRef.current.fitToCoordinates(bestPoints, {
+        mapRef.current.fitToCoordinates(best.points, {
           edgePadding: { top: 100, right: 50, bottom: 150, left: 50 },
           animated: true,
         });
@@ -342,122 +466,303 @@ export default function MapScreen() {
       Alert.alert('Routing Error', 'Failed to fetch route.');
     }
 
-    // --- END AI INTEGRATION ---
-
-    // Fit map to show entire route
     setIsLoading(false);
     setShowRouteInput(false);
-  }, [startLocation, endLocation, alternativeAttempt, mapRef.current]);
+  }, [startLocation, endLocation, mapRef.current]);
 
-  const findSaferRoute = useCallback(() => {
-    setAlternativeAttempt(prev => prev + 1);
-  }, []);
+  // --- traceRoute (User Requested Implementation) ---
+  const traceRoute = async (startLoc: any, destLoc: any) => {
+    try {
+      console.log("🔄 Fetching Routes...");
+      setIsLoading(true);
 
-  // Re-run route generation when a safer alternative is requested
-  useEffect(() => {
-    // We only want this to run when the button is pressed, not on the initial load (attempt 0)
-    if (alternativeAttempt > 0) {
-      generateRoute();
+      const mode = 'driving';
+      // API Call with 'alternatives=true'
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${startLoc.latitude},${startLoc.longitude}&destination=${destLoc.latitude},${destLoc.longitude}&key=${GOOGLE_MAPS_API_KEY}&mode=${mode}&alternatives=true`;
+
+      const resp = await fetch(url);
+      const result = await resp.json();
+
+      if (result.routes && result.routes.length > 0) {
+        console.log(`🛣️ ${result.routes.length} Routes Found!`);
+
+        // 1. Save all routes
+        setAllRoutes(result.routes);
+        setSelectedRouteIndex(0); // Select first by default
+
+        // Process for visualization (Decode polylines)
+        const processedRoutes = [];
+        for (let i = 0; i < result.routes.length; i++) {
+          const route = result.routes[i];
+          const points = decodePolyline(route.overview_polyline.points);
+          const mappedPoints = points.map(p => ({ latitude: p[0], longitude: p[1] }));
+
+          // Analyze safety (Keep existing powerful logic)
+          const segments = await aiSafetyAnalyzer.analyzeRouteSegments(mappedPoints, false);
+          const score = calculateAIOverallSafetyScore(segments);
+
+          processedRoutes.push({
+            route: route,
+            points: mappedPoints,
+            segments: segments,
+            score: score,
+            leg: route.legs[0]
+          });
+        }
+        setAnalyzedRoutes(processedRoutes);
+
+        // 2. Safety Markers Search (Near Destination)
+        // Using existing searchNearbyPlaces logic from aiSafetyAnalyzer/placesService
+        // We'll use the destination coordinates from destLoc
+
+        // Note: We need to import searchNearbyPlaces or use the service. 
+        // Since we have aiSafetyAnalyzer, let's use its robust logic or call service directly if imported.
+        // For simplicity requested:
+        try {
+          // Import service to fetch places
+          const placesService = await import('../services/placesService');
+
+          // Improved Logic: Multi-Point Search (Start, Middle, End)
+          const routePoints = processedRoutes[0].points;
+          const searchPoints = [];
+
+          if (routePoints.length > 0) {
+            // 1. Start
+            searchPoints.push(routePoints[0]);
+            // 2. Middle
+            searchPoints.push(routePoints[Math.floor(routePoints.length / 2)]);
+            // 3. End
+            searchPoints.push(routePoints[routePoints.length - 1]);
+          } else {
+            // Fallback to dest if no points (unlikely)
+            searchPoints.push(destLoc);
+          }
+
+          console.log(`🔍 Searching safety spots at ${searchPoints.length} route points...`);
+
+          // Parallel Fetch for ALL points
+          const searchPromises = searchPoints.flatMap(pt => [
+            placesService.searchNearbyPlaces(pt.latitude, pt.longitude, 'police', 3000),
+            placesService.searchNearbyPlaces(pt.latitude, pt.longitude, 'hospital', 3000)
+          ]);
+
+          const results = await Promise.all(searchPromises);
+
+          // Flatten results
+          const allFound = results.flat();
+
+          const combinedRaw = allFound.map((item: any) => {
+            // Basic type inference if not explicit
+            // (Depends on real response structure, 'types' usually array)
+            // We'll trust the explicit search type for now or inferred mapping 
+            // Note: searchNearbyPlaces usually returns typed objects or just raw. 
+            // Let's assume we need to tag them based on what call it was? 
+            // Actually, the result objects likely have 'types' or we rely on the loop.
+            // But simplest way since we flatMapped:
+            // We can't easily distinguish source call type in flat().
+            // However, our previous logic manually mapped type.
+            // Let's rely on the object's own categorization or add type if missing.
+            // IMPROVEMENT: map types during the promise creation if needed, 
+            // but usually 'searchNearbyPlaces' result has types.
+            // Let's just flatten effectively.
+            // For robustness: we'll try to guess type from 'types' array if present, else default.
+            let type = 'hospital';
+            if (item.types && item.types.includes('police')) type = 'police';
+
+            return { ...item, type };
+          });
+
+          // Deduplicate based on name or location closeness
+          const uniqueMarkersMap = new Map();
+          combinedRaw.forEach(m => {
+            const key = m.id || `${m.displayName?.text || m.name}-${m.location?.latitude?.toFixed(3)}`;
+            if (!uniqueMarkersMap.has(key)) {
+              uniqueMarkersMap.set(key, m);
+            }
+          });
+          const rawMarkers = Array.from(uniqueMarkersMap.values());
+
+          // Explicitly Map Coordinates for Rendering
+          const cleanMarkers = rawMarkers.map(m => {
+            // Handle various Google Places API response structures
+            const lat = Number(m.geometry?.location?.lat || m.location?.latitude || m.location?.lat || m.latitude);
+            const lng = Number(m.geometry?.location?.lng || m.location?.longitude || m.location?.lng || m.longitude);
+
+            return {
+              coordinate: {
+                latitude: lat,
+                longitude: lng
+              },
+              title: m.displayName?.text || m.name || "Safe Haven",
+              type: m.type,
+              originalLocation: m.geometry?.location || m.location,
+              user_ratings_total: m.user_ratings_total
+            };
+          }).slice(0, 20); // UPDATED LIMIT: Max 20 markers
+
+
+          // Log 1: On Data Fetch
+          const hospitals = cleanMarkers.filter(m => m.type === 'hospital');
+          const police = cleanMarkers.filter(m => m.type === 'police');
+          console.log("📥 Raw Data Loaded - Hospitals:", hospitals.length, "Police:", police.length);
+          if (hospitals.length > 0) {
+            console.log("🕵️ Data Sample Check:", hospitals[0]?.title, "Reviews:", hospitals[0]?.user_ratings_total || 0);
+          }
+
+          setAllSafetyMarkers(cleanMarkers);
+          setSafetyHotspots(cleanMarkers);
+        } catch (err) {
+          console.log("Safety search error:", err);
+        }
+
+        // 3. Set Navigation Data
+        const leg = result.routes[0].legs[0];
+        setNavStats({
+          duration: leg.duration.text,
+          distance: leg.distance.text,
+          arrivalTime: "Calculating..."
+        });
+
+        // Set Map State
+        const best = processedRoutes[0];
+        setRouteCoordinates(best.points);
+        setNavigationSteps(best.route.legs[0].steps);
+        setSelectedRouteLeg(best.route.legs[0]);
+        setSafetySegments(best.segments);
+        setOverallScore(best.score);
+        setShowSaferAlternative(true);
+
+        if (mapRef.current) {
+          mapRef.current.fitToCoordinates(best.points, {
+            edgePadding: { top: 100, right: 50, bottom: 150, left: 50 },
+            animated: true,
+          });
+        }
+
+      } else {
+        console.log("❌ No routes found.");
+        Alert.alert('Error', 'No routes found');
+      }
+    } catch (error) {
+      console.error("Error tracing route:", error);
+      Alert.alert('Error', 'Route tracing failed');
+    } finally {
+      setIsLoading(false);
+      setShowRouteInput(false);
     }
-  }, [alternativeAttempt, generateRoute]);
+  };
 
-  // Memoized distance calculation to avoid repeated computation
+  // --- LOD LOGIC ---
+  const handleRegionChange = (newRegion: any) => {
+    setRegion(newRegion);
+
+    // Zoom Detection (Threshold 0.05)
+    const zoomedOut = newRegion.latitudeDelta > 0.05;
+    if (zoomedOut !== isZoomedOut) {
+      setIsZoomedOut(zoomedOut);
+    }
+
+    // Log 2: On Region Change
+    // Debouncing log slightly to avoid spam or just accept it as per request
+    console.log("🗺️ Map Moved. Delta:", newRegion.latitudeDelta.toFixed(4), "Mode:", zoomedOut ? "CITY (Filtered)" : "STREET (Show All)");
+  };
+
+  // Filter Logic Effect
+  useEffect(() => {
+    let filtered = allSafetyMarkers.filter(m => {
+      // 1. CRITICAL: Police always show if toggle is ON (Ignore Zoom/Ratings)
+      if (m.type === 'police') {
+        return showPolice;
+      }
+
+      // 2. Toggles Check (Hospitals)
+      if (m.type === 'hospital' && !showHospitals) return false;
+
+      // 3. Zoom/Quality Check (Hospitals only)
+      if (isZoomedOut) {
+        // CITY MODE: Show only popular places (> 50 reviews)
+        const ratingCount = m.user_ratings_total || 0;
+        if (ratingCount <= 50) return false;
+      }
+
+      return true;
+    });
+
+    // Log 3: Inside Filtering
+    const visiblePolice = filtered.filter(m => m.type === 'police');
+    console.log("⚡ Filtering Applied. Visible Markers:", filtered.length, "ZoomedOut:", isZoomedOut);
+    console.log("👮 Visible Police Count:", visiblePolice.length);
+
+    setVisibleSafetyMarkers(filtered);
+
+  }, [allSafetyMarkers, isZoomedOut, showPolice, showHospitals]);
+
+  // WRAPPERS to link old UI to new logic
+  // Renaming generateRoute to call traceRoute internally if we want to switch completely, 
+  // or just replacing generateRoute usage with traceRoute in handleSelectPlace.
+
+
+
+  // --- LOGIC: NAVIGATION & TRACKING ---
+
   const calculateDistance = useCallback((lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371e3; // Earth's radius in meters
+    const R = 6371e3;
     const φ1 = lat1 * Math.PI / 180;
     const φ2 = lat2 * Math.PI / 180;
     const Δφ = (lat2 - lat1) * Math.PI / 180;
     const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) *
-      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
     return R * c;
   }, []);
 
-  // Memoized bearing calculation
   const calculateBearing = useCallback((lat1: number, lon1: number, lat2: number, lon2: number) => {
     const φ1 = lat1 * Math.PI / 180;
     const φ2 = lat2 * Math.PI / 180;
     const Δλ = (lon2 - lon1) * Math.PI / 180;
-
     const x = Math.sin(Δλ) * Math.cos(φ2);
     const y = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
-
     const θ = Math.atan2(x, y);
     return (θ * 180 / Math.PI + 360) % 360;
   }, []);
 
-  // Memoized navigation steps to avoid recalculation
-  const generateNavigationSteps = useCallback((routePoints: any[]) => {
-    if (routePoints.length < 2) return [];
+  // Find closest point on route to a given location
+  const findClosestCoordinate = (target: { latitude: number, longitude: number }, routePoints: any[]) => {
+    let minDist = Infinity;
+    let closestRef = target; // Default to target itself if no points
 
-    const steps = [];
-    let totalDistance = 0;
-
-    for (let i = 0; i < routePoints.length - 1; i++) {
-      const current = routePoints[i];
-      const next = routePoints[i + 1];
-      const distance = calculateDistance(current.latitude, current.longitude, next.latitude, next.longitude);
-      const bearing = calculateBearing(current.latitude, current.longitude, next.latitude, next.longitude);
-
-      // Determine direction based on bearing
-      let direction = 'Continue straight';
-      let icon = '⬆️';
-
-      if (i > 0) {
-        const prev = routePoints[i - 1];
-        const prevBearing = calculateBearing(prev.latitude, prev.longitude, current.latitude, current.longitude);
-        const turn = (bearing - prevBearing + 360) % 360;
-
-        if (turn > 45 && turn < 135) {
-          direction = 'Turn right';
-          icon = '↗️';
-        } else if (turn > 225 && turn < 315) {
-          direction = 'Turn left';
-          icon = '↖️';
-        } else if (turn > 135 && turn < 225) {
-          direction = 'Make a U-turn';
-          icon = '↩️';
-        }
+    for (const p of routePoints) {
+      const d = calculateDistance(target.latitude, target.longitude, p.latitude, p.longitude);
+      if (d < minDist) {
+        minDist = d;
+        closestRef = p;
       }
-
-      totalDistance += distance;
-
-      steps.push({
-        instruction: direction,
-        distance: Math.round(distance),
-        totalDistance: Math.round(totalDistance),
-        coordinate: current,
-        icon: icon,
-        bearing: bearing
-      });
     }
-
-    // Add final destination step
-    steps.push({
-      instruction: 'You have arrived at your destination',
-      distance: 0,
-      totalDistance: Math.round(totalDistance),
-      coordinate: routePoints[routePoints.length - 1],
-      icon: '🏁',
-      bearing: 0
-    });
-
-    return steps;
-  }, []);
-
-  const reroute = () => {
-    if (!userLocation) return;
-    setStartLocation(`${userLocation.coords.latitude}, ${userLocation.coords.longitude}`);
+    return closestRef;
   };
-  // Optimized navigation start with loading state
+
+
+
+  const handleReroute = (targetLocation: any) => {
+    Alert.alert(
+      "Emergency Reroute",
+      "Rerouting to nearest safety haven...",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Go Now", onPress: () => {
+            // Trigger reroute from current user location to this target
+            generateRoute(null, targetLocation);
+          }
+        }
+      ]
+    );
+  };
+
   const startNavigation = useCallback(() => {
     if (routeCoordinates.length > 0) {
       if (navigationSteps.length === 0) {
-        Alert.alert('Error', 'Navigation data is not available. Please generate a route first.');
+        Alert.alert('Error', 'No navigation steps available.');
         return;
       }
       try {
@@ -465,21 +770,30 @@ export default function MapScreen() {
         setIsNavigating(true);
 
         const totalDurationSeconds = navigationSteps.reduce((sum, step) => sum + step.duration.value, 0);
-        const estimatedMinutes = Math.ceil(totalDurationSeconds / 60);
-        setEstimatedTime(estimatedMinutes);
+        setEstimatedTime(Math.ceil(totalDurationSeconds / 60));
 
-        // Close route input and safety card
+        // Calculate Real Stats
+        if (selectedRouteLeg) {
+          const now = new Date();
+          now.setSeconds(now.getSeconds() + selectedRouteLeg.duration.value);
+          const eta = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          setNavStats({
+            duration: selectedRouteLeg.duration.text,
+            distance: selectedRouteLeg.distance.text,
+            arrivalTime: eta
+          });
+        }
+
         setShowRouteInput(false);
         setShowSaferAlternative(false);
 
-        // --- LIVE NAVIGATION ---
-        // Start watching the user's position
         (async () => {
           locationWatcher.current = await Location.watchPositionAsync(
             {
               accuracy: Location.Accuracy.BestForNavigation,
-              timeInterval: 1000, // Update every second
-              distanceInterval: 10, // Update every 10 meters
+              timeInterval: 1000,
+              distanceInterval: 10,
             },
             (newLocation) => {
               setUserLocation(newLocation);
@@ -487,23 +801,20 @@ export default function MapScreen() {
           );
         })();
 
-        // Animate camera to starting position
         if (mapRef.current) {
           mapRef.current.animateCamera({
             center: routeCoordinates[0],
-            zoom: 18, // Zoom in for navigation
+            zoom: 18,
             heading: 0,
             pitch: 45,
           });
         }
       } catch (error) {
-        console.error('Navigation start error:', error);
-        Alert.alert('Error', 'Failed to start navigation. Please try again.');
+        Alert.alert('Error', 'Failed to start navigation.');
       }
     }
   }, [routeCoordinates, navigationSteps]);
 
-  // Optimized navigation stop
   const stopNavigation = useCallback(() => {
     setIsNavigating(false);
     setIsOffRoute(false);
@@ -512,46 +823,91 @@ export default function MapScreen() {
     setEstimatedTime(0);
     setUserLocation(null);
 
-    // Stop watching location
     if (locationWatcher.current) {
       locationWatcher.current.remove();
       locationWatcher.current = null;
     }
 
-    // --- NEW: Reset all route-related state ---
     setRouteCoordinates([]);
     setSafetySegments([]);
     setOverallScore(0);
     setShowSaferAlternative(false);
-    setAlternativeAttempt(0);
     setNavigationSteps([]);
     setStartLocation('');
     setEndLocation('');
-    // --- END NEW ---
   }, []);
 
-  // Effect for handling live navigation logic
-  useEffect(() => {
-    if (!isNavigating || !userLocation || navigationSteps.length === 0) {
-      return;
+  const handleRecenter = useCallback(() => {
+    if (userLocation && mapRef.current) {
+      mapRef.current.animateToRegion({
+        latitude: userLocation.coords.latitude,
+        longitude: userLocation.coords.longitude,
+        latitudeDelta: 0.005,
+        longitudeDelta: 0.005,
+      });
+    } else {
+      Alert.alert("Location not found", "Wait for location to lock on.");
     }
+  }, [userLocation]);
+
+  const handleRecenterNav = useCallback(() => {
+    if (userLocation && mapRef.current) {
+      mapRef.current.animateCamera({
+        center: userLocation.coords,
+        pitch: 50, // Restore 3D tilt
+        heading: userLocation.coords.heading || 0,
+        zoom: 18,
+      }, { duration: 1000 });
+    }
+  }, [userLocation]);
+
+  const handleRouteSelect = (index: number) => {
+    if (index === selectedRouteIndex) return;
+
+    setSelectedRouteIndex(index);
+    const selected = analyzedRoutes[index];
+
+    setRouteCoordinates(selected.points);
+    setNavigationSteps(selected.route.legs[0].steps);
+    setSelectedRouteLeg(selected.leg);
+    setSafetySegments(selected.segments);
+    setOverallScore(selected.score);
+
+    // Update camera to fit new route
+    if (mapRef.current) {
+      mapRef.current.fitToCoordinates(selected.points, {
+        edgePadding: { top: 100, right: 50, bottom: 150, left: 50 },
+        animated: true,
+      });
+    }
+  };
+
+  // --- LOGIC: SAFETY INTEL AGGREGATION ---
+  const safetyIntel = useMemo(() => {
+    let police = null;
+    let hospital = null;
+    // Iterate through segments to find key intel
+    // We prioritize the info from the START or END of the route, or the first valid one found.
+    for (const segment of safetySegments) {
+      if (!police && segment.safetyFactors?.police) police = segment.safetyFactors.police;
+      if (!hospital && segment.safetyFactors?.hospital) hospital = segment.safetyFactors.hospital;
+      if (police && hospital) break;
+    }
+    return { police, hospital };
+  }, [safetySegments]);
+
+  // Live Navigation Effect
+  useEffect(() => {
+    if (!isNavigating || !userLocation || navigationSteps.length === 0) return;
 
     const userCoords = userLocation.coords;
 
-    // 1. Animate map to follow user
+    // Follow user with pitched camera during navigation
     if (mapRef.current) {
-      mapRef.current.animateCamera(
-        {
-          center: userCoords,
-          heading: userLocation.coords.heading ?? 0,
-          zoom: 18, // Keep it zoomed in
-          pitch: 45, // Keep the 3D perspective
-        },
-        { duration: 500 }
-      );
+      // NOTE: We rely on MapView props for following, but we can enforce pitch here if needed.
     }
 
-    // 2. Check for step advancement
+    // Step Advancement
     const nextStep = navigationSteps[currentStepIndex];
     if (!nextStep) return;
 
@@ -565,1265 +921,1024 @@ export default function MapScreen() {
 
     setDistanceToNext(distanceToTurn);
 
-    // Advance to next step if user is close enough to the turn
-    if (distanceToTurn < 25) { // 25-meter threshold
+    if (distanceToTurn < 25) {
       if (currentStepIndex < navigationSteps.length - 1) {
         setCurrentStepIndex(currentStepIndex + 1);
       } else {
-        // Reached destination
-        Alert.alert('Destination Reached', 'You have arrived at your destination.');
+        Alert.alert('Arrived', 'You have reached your destination.');
         stopNavigation();
       }
     }
-
-    // 3. Check for off-route
-    const isOff = isUserOffRoute(userCoords, routeCoordinates);
-    setIsOffRoute(isOff);
-
   }, [userLocation, isNavigating, navigationSteps]);
 
-  // Re-run route generation if start location changes (for rerouting)
-  useEffect(() => {
-    if (isNavigating && startLocation !== `${userLocation?.coords.latitude}, ${userLocation?.coords.longitude}`) {
-      generateRoute();
-    }
-  }, [isNavigating, userLocation, startLocation, generateRoute]);
 
-  // Helper to check if user is off-route
-  const isUserOffRoute = (userCoords: Location.LocationObject['coords'], route: any[]) => {
-    for (let i = 0; i < route.length - 1; i++) {
-      const dist = distanceToLine(userCoords, route[i], route[i + 1]);
-      if (dist < 0.05) { // 50 meters threshold in km
-        return false; // User is on-route
-      }
-    }
-    return true; // User is off-route
-  };
-
-  const distanceToLine = (p: any, v: any, w: any) => {
-    const l2 = (v.latitude - w.latitude) ** 2 + (v.longitude - w.longitude) ** 2;
-    if (l2 === 0) return calculateDistance(p.latitude, p.longitude, v.latitude, v.longitude);
-    let t = ((p.latitude - v.latitude) * (w.latitude - v.latitude) + (p.longitude - v.longitude) * (w.longitude - v.longitude)) / l2;
-    t = Math.max(0, Math.min(1, t));
-    const projection = {
-      latitude: v.latitude + t * (w.latitude - v.latitude),
-      longitude: v.longitude + t * (w.longitude - v.longitude)
-    };
-    return calculateDistance(
-      p.latitude, p.longitude,
-      projection.latitude, projection.longitude
-    ) / 1000; // convert to km
-  };
-
-  // Memoized route points generation
-  const generateRoutePoints = useCallback((start: any, end: any, attempt: number) => {
-    if (attempt > 0) {
-      // This function is in safetyAnalysis.ts, which we are phasing out.
-      // For now, we'll just add more curve to simulate an alternative.
-      // In a real app, this would call a different routing API.
-      console.log(`Generating alternative route, attempt: ${attempt}`);
-    }
-
-    // Generate a curved route between start and end with fewer points for better performance
-    const points = [];
-    const steps = 25; // Reduced from 50 to 25 for better performance
-
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      // Add some curve to the route
-      const curve = Math.sin(t * Math.PI) * (0.01 + attempt * 0.02); // More curve for alternatives
-
-      points.push({
-        latitude: start.latitude + (end.latitude - start.latitude) * t + curve,
-        longitude: start.longitude + (end.longitude - start.longitude) * t,
-      });
-    }
-
-    return points;
-  }, []);
-
-  // --- REAL ROUTING INTEGRATION ---
-  // Helper to get an icon from a Google Maps maneuver string
-  const getManeuverIcon = (maneuver?: string) => {
-    if (!maneuver) return '⬆️'; // Straight
-    if (maneuver.includes('turn-right')) return '➡️';
-    if (maneuver.includes('turn-left')) return '⬅️';
-    if (maneuver.includes('sharp-right')) return '↪️';
-    if (maneuver.includes('sharp-left')) return '↩️';
-    if (maneuver.includes('uturn')) return '🔄';
-    if (maneuver.includes('roundabout')) return '🔄';
-    if (maneuver.includes('fork')) return '🍴';
-    if (maneuver.includes('merge')) return '🔀';
-    if (maneuver.includes('on-ramp')) return '↗️';
-    if (maneuver.includes('off-ramp')) return '↘️';
-    if (maneuver.includes('straight')) return '⬆️';
-    if (maneuver.includes('destination')) return '🏁';
-
-    // Default for other cases like 'keep-right', 'keep-left'
-    if (maneuver.includes('right')) return '↗️';
-    if (maneuver.includes('left')) return '↖️';
-
-    return '⬆️';
-  };
-
-  // --- END REAL ROUTING INTEGRATION ---
+  // --- UI RENDERING (STEALTH LUXURY) ---
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+
+      {/* 1. Map Layer */}
       <MapView
         ref={mapRef}
         style={styles.map}
         provider={PROVIDER_GOOGLE}
         region={region}
-        customMapStyle={darkMode ? darkMapStyle : []}
-        showsUserLocation={true}
+        customMapStyle={mapCustomStyle}
+        // Updated Nav Behavior
+        showsUserLocation={!isGhostMode || isNavigating}
+        followsUserLocation={isNavigating}
+        showsCompass={!isNavigating}
+        pitchEnabled={true}
+        camera={isNavigating && userLocation ? {
+          center: {
+            latitude: userLocation.coords.latitude,
+            longitude: userLocation.coords.longitude,
+          },
+          pitch: 45,
+          heading: userLocation.coords.heading || 0,
+          altitude: 200, // Approximate for zoom level
+          zoom: 18
+        } : undefined}
         showsMyLocationButton={false}
-        onRegionChangeComplete={setRegion}
+        userInterfaceStyle="dark"
+        onRegionChangeComplete={handleRegionChange}
       >
-        {/* Draw safety segments */}
-        {routeCoordinates.length > 0 && safetySegments.length === 0 && (
-          // While AI is analyzing, show a single neutral line
+        {/* 1. ROUTES (Unified Loop: Selected=Blue, Others=Grey) */}
+        {analyzedRoutes.map((r, index) => (
           <Polyline
-            coordinates={routeCoordinates}
-            strokeColor={colors.primary}
+            key={`route-${index}`}
+            coordinates={r.points}
+            strokeColor={index === selectedRouteIndex ? "#007AFF" : "#B0B0B0"} // STRICTLY BLUE for selected
             strokeWidth={6}
+            zIndex={index === selectedRouteIndex ? 10 : 1}
+            tappable={true}
+            onPress={() => handleRouteSelect(index)}
           />
-        )}
-        {safetySegments.length > 0 &&
-          safetySegments.map((segment, index) => (
-            <Polyline
-              key={index}
-              coordinates={segment.coordinates}
-              strokeColor={segment.color}
-              strokeWidth={6}
-              tappable={true}
-              onPress={() => setSelectedSegment(segment)}
-            />
+        ))}
+
+        {/* 2. SAFETY MARKERS (LOD Filtered) */}
+        {visibleSafetyMarkers
+          .slice(0, 20).map((marker, index) => (
+            <Marker
+              key={`safe-${index}`}
+              coordinate={marker.coordinate}
+              title={marker.title || "Safe Spot"}
+              tracksViewChanges={true} // FORCE RENDER
+              zIndex={100} // TOPMOST
+              onCalloutPress={() => {
+                // Trigger external navigation
+                openMap(marker.coordinate.latitude, marker.coordinate.longitude, marker.title);
+              }}
+            >
+              <View style={{
+                backgroundColor: 'white',
+                borderRadius: 30, // Optimized rounded look
+                padding: 4, // REDUCED from 6
+                borderWidth: 2,
+                borderColor: marker.type === 'police' ? '#007AFF' : '#FF3B30',
+                elevation: 10, // High Elevation for Android Visibility
+                shadowColor: 'black',
+                shadowOpacity: 0.3,
+                shadowOffset: { width: 0, height: 2 },
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Text style={{ fontSize: 18 }}>
+                  {marker.type === 'police' ? '👮‍♂️' : '🏥'}
+                </Text>
+              </View>
+
+              <Callout tooltip>
+                <View style={{ backgroundColor: 'white', padding: 10, borderRadius: 8, width: 200 }}>
+                  <Text style={{ fontWeight: 'bold', fontSize: 14 }}>{marker.title}</Text>
+                  <Text style={{ fontSize: 12, color: '#555', marginTop: 2 }}>
+                    {marker.type === 'police' ? '👮 Police Station' : '🏥 Hospital'}
+                  </Text>
+                  {/* Rating Info */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                    <Text style={{ color: '#FFD700', fontSize: 12 }}>⭐</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', marginLeft: 4 }}>
+                      {marker.rating || 'N/A'} ({marker.user_ratings_total || 0})
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 12, color: 'blue', marginTop: 5, fontWeight: 'bold' }}>
+                    Tap to Navigate ➔
+                  </Text>
+                </View>
+              </Callout>
+            </Marker>
           ))}
 
-        {/* Live User Location Puck during Navigation */}
+        {/* Custom Navigation Marker */}
         {isNavigating && userLocation && (
           <Marker
             coordinate={userLocation.coords}
-            anchor={{ x: 0.5, y: 0.5 }} // Center the icon on the coordinate
+            anchor={{ x: 0.5, y: 0.5 }}
+            rotation={userLocation.coords.heading || 0}
+            flat
           >
-            <View style={styles.userLocationPuck}>
-              <Text style={[
-                styles.userLocationPuckArrow,
-                { transform: [{ rotate: `${userLocation.coords.heading || 0}deg` }] }
-              ]}>
-                ▲
-              </Text>
+            <View style={styles.puckContainer}>
+              <View style={styles.puckGlow} />
+              <View style={styles.puckCore} />
             </View>
           </Marker>
         )}
-        {/* Start and End markers */}
-        {routeCoordinates.length > 0 && (
-          <>
-            <Marker coordinate={routeCoordinates[0]}>
-              <View style={styles.markerContainer}>
-                <LinearGradient
-                  colors={[colors.primary, colors.secondary]}
-                  style={styles.marker}
-                >
-                  <Text style={styles.markerText}>A</Text>
-                </LinearGradient>
-              </View>
-            </Marker>
-            <Marker coordinate={routeCoordinates[routeCoordinates.length - 1]}>
-              <View style={styles.markerContainer}>
-                <LinearGradient
-                  colors={[colors.danger, colors.accent]}
-                  style={styles.marker}
-                >
-                  <Text style={styles.markerText}>B</Text>
-                </LinearGradient>
-              </View>
-            </Marker>
-          </>
-        )}
       </MapView>
 
-      {/* Enhanced Route Input Modal */}
+      {/* 2. Ghost Mode Blur Overlay */}
+      {isGhostMode && (
+        <BlurView
+          intensity={40}
+          tint="dark"
+          style={[StyleSheet.absoluteFill, { zIndex: 5 }]}
+        />
+      )}
+
+      {/* 3. Top Control Bar (Search & Ghost Toggle) */}
+      <View style={[styles.topBar, { zIndex: 100 }]}>
+        <BlurView intensity={20} tint="dark" style={styles.searchBar}>
+          <View style={styles.searchPlaceholder}>
+            <Text style={styles.searchIcon}>🔍</Text>
+            <TextInput
+              style={styles.inlineSearchInput}
+              placeholder="Where to safely?"
+              placeholderTextColor="rgba(255,255,255,0.6)"
+              value={endLocation}
+              onChangeText={fetchSuggestions}
+            />
+            {endLocation.length > 0 && (
+              <TouchableOpacity onPress={() => { setEndLocation(''); setSuggestions([]); }}>
+                <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.6)" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </BlurView>
+
+        {/* Ghost Mode Toggle */}
+        <BlurView intensity={20} tint="dark" style={styles.ghostToggle}>
+          <Text style={styles.ghostIcon}>👻</Text>
+          <Switch
+            value={isGhostMode}
+            onValueChange={setIsGhostMode}
+            trackColor={{ false: '#333', true: 'rgba(127, 0, 255, 0.5)' }}
+            thumbColor={isGhostMode ? '#7F00FF' : '#f4f3f4'}
+          />
+        </BlurView>
+      </View>
+
+      {/* 4. Safety Filter Toggles (Responsive Position) */}
+      <View style={isNavigating ? {
+        // Nav Mode: Right Side Vertical Stack
+        position: 'absolute',
+        top: 280, // FINALLY LOWERED to avoid instructions
+        right: 20,
+        zIndex: 10,
+        flexDirection: 'column', // Vertical
+        gap: 12,
+        alignItems: 'flex-end'
+      } : {
+        // Default Mode: Top Center Horizontal
+        position: 'absolute',
+        top: 130,
+        left: 0,
+        right: 0,
+        zIndex: 90,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 12
+      }}>
+        {/* Police Toggle */}
+        <TouchableOpacity
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: showPolice ? '#007AFF' : '#E0E0E0',
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 25,
+            borderWidth: 1,
+            borderColor: showPolice ? '#007AFF' : '#B0B0B0',
+            shadowColor: '#000',
+            shadowOpacity: 0.3,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 5
+          }}
+          onPress={() => setShowPolice(!showPolice)}
+        >
+          <Text style={{ fontSize: 16, marginRight: 6 }}>👮‍♂️</Text>
+          <Text style={{ color: showPolice ? 'white' : '#333', fontSize: 13, fontWeight: '700' }}>Police</Text>
+        </TouchableOpacity>
+
+        {/* Hospital Toggle */}
+        <TouchableOpacity
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: showHospitals ? '#FF3B30' : '#E0E0E0',
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 25,
+            borderWidth: 1,
+            borderColor: showHospitals ? '#FF3B30' : '#B0B0B0',
+            shadowColor: '#000',
+            shadowOpacity: 0.3,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 5
+          }}
+          onPress={() => setShowHospitals(!showHospitals)}
+        >
+          <Text style={{ fontSize: 16, marginRight: 6 }}>🏥</Text>
+          <Text style={{ color: showHospitals ? 'white' : '#333', fontSize: 13, fontWeight: '700' }}>Hospital</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Floating Suggestions List (Below Header) */}
+      {
+        suggestions.length > 0 && !isNavigating && (
+          <View style={styles.headerSuggestionsContainer}>
+            <FlatList
+              data={suggestions}
+              keyExtractor={(item) => item.place_id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.suggestionItem}
+                  onPress={() => handleSelectPlace(item.place_id, item.description)}
+                >
+                  <MapPin size={16} color="#666" style={{ marginRight: 10 }} />
+                  <Text style={styles.suggestionText} numberOfLines={1}>
+                    {item.description}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              ItemSeparatorComponent={() => <View style={styles.separator} />}
+              style={{ maxHeight: 200 }}
+            />
+          </View>
+        )
+      }
+
+      {/* 4. Floating HUD (Bottom) */}
+      {
+        !isNavigating && !showRouteInput && (
+          <Animated.View entering={SlideInUp.delay(500)} style={[styles.hudContainer, { zIndex: 20 }]}>
+            <BlurView intensity={30} tint="dark" style={styles.hudGlass}>
+              <View style={styles.hudRow}>
+                <View style={styles.hudInfo}>
+                  <Text style={styles.hudLabel}>CURRENT LOCATION</Text>
+                  <Text style={styles.hudValue} numberOfLines={1}>{currentAddressLabel}</Text>
+                </View>
+                <View style={[styles.hudStatus, isGhostMode ? styles.statusGhost : styles.statusActive]}>
+                  <View style={[styles.statusDot, { backgroundColor: isGhostMode ? '#A855F7' : '#00F0FF' }]} />
+                  <Text style={[styles.statusText, { color: isGhostMode ? '#A855F7' : '#00F0FF' }]}>
+                    {isGhostMode ? 'GHOST MODE' : 'MONITORING'}
+                  </Text>
+                </View>
+              </View>
+            </BlurView>
+          </Animated.View>
+        )
+      }
+
+      {/* 5. Navigation Instructions HUD (Redesigned) */}
+      {
+        isNavigating && (
+          <>
+            {/* A. Top Direction Banner */}
+            <Animated.View entering={SlideInUp} style={styles.navTopBanner}>
+              <View style={styles.turnIconBox}>
+                <Ionicons name="arrow-undo" size={32} color="#FFF" />
+              </View>
+              <View style={styles.turnTextBox}>
+                <Text style={styles.turnInstruction}>Turn Left onto Sector 29 Road</Text>
+                <Text style={styles.turnSubtext}>in 150 meters</Text>
+              </View>
+            </Animated.View>
+
+            {/* B. Bottom Info Card */}
+            <Animated.View entering={FadeInDown} style={styles.navBottomCard}>
+              <View style={styles.navStatsRow}>
+                <View>
+                  <Text style={styles.navTime}>{navStats.duration || '0 min'}</Text>
+                  <Text style={styles.navMetaText}>
+                    {navStats.distance || '0 km'} • ETA: {navStats.arrivalTime || '--:--'}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={stopNavigation} style={styles.navExitBtn}>
+                  <Ionicons name="close" size={24} color="#FFF" />
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+
+            {/* C. Navigation Recenter Button */}
+            <TouchableOpacity onPress={handleRecenterNav} style={styles.navRecenterBtn}>
+              <Navigation size={24} color="#007AFF" />
+            </TouchableOpacity>
+          </>
+        )
+      }
+
+      {/* 8. Recenter Button */}
+      {
+        !isNavigating && !showRouteInput && (
+          <TouchableOpacity onPress={handleRecenter} style={styles.recenterBtn}>
+            <Target size={24} color="#000" />
+          </TouchableOpacity>
+        )
+      }
+
+      {/* 6. Route Planning Modal */}
       <Modal
         visible={showRouteInput}
-        animationType="slide"
+        animationType="fade"
         transparent={true}
+        onRequestClose={() => setShowRouteInput(false)}
       >
-        <View style={styles.enhancedModalContainer}>
-          <View style={styles.modalBackdrop} />
-          <View style={styles.enhancedRouteCard}>
-            <LinearGradient
-              colors={[colors.backgroundCard, colors.backgroundLight]}
-              style={styles.cardGradient}
-            >
-              {/* Header */}
-              <View style={styles.modalHeader}>
-                <View style={styles.headerContent}>
-                  <View style={styles.headerIcon}>
-                    <Text style={styles.headerIconText}>🗺️</Text>
-                  </View>
-                  <View>
-                    <Text style={styles.modalTitle}>Plan Your Safe Route</Text>
-                    <Text style={styles.modalSubtitle}>Get turn-by-turn navigation with safety insights</Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  style={styles.closeButton}
-                  onPress={() => setShowRouteInput(false)}
-                >
-                  <Text style={styles.closeButtonText}>✕</Text>
+        <View style={styles.modalOverlay}>
+          <BlurView intensity={50} tint="dark" style={styles.modalGlassCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>SECURE ROUTE</Text>
+              <TouchableOpacity onPress={() => setShowRouteInput(false)}>
+                <Text style={styles.closeText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.inputStack}>
+              <View style={styles.glassInputWrapper}>
+                <Text style={styles.inputLabel}>START</Text>
+                <TextInput
+                  style={styles.glassInput}
+                  placeholder="Current Location"
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  value={startLocation}
+                  onChangeText={setStartLocation}
+                />
+                <TouchableOpacity onPress={useCurrentLocation}>
+                  <Text>📍</Text>
                 </TouchableOpacity>
               </View>
+              <View style={styles.glassInputWrapper}>
+                <Text style={styles.inputLabel}>END</Text>
+                <TextInput
+                  style={styles.glassInput}
+                  placeholder="Destination"
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  value={endLocation}
+                  onChangeText={fetchSuggestions}
+                />
+              </View>
 
-              {/* Location Inputs */}
-              <View style={styles.locationInputsContainer}>
-                {/* Start Location */}
-                <View style={styles.locationInputWrapper}>
-                  <View style={styles.locationIconContainer}>
-                    <View style={[styles.locationDot, { backgroundColor: colors.safe }]} />
-                    <View style={styles.locationLine} />
-                  </View>
-                  <View style={styles.locationInputContent}>
-                    <Text style={styles.locationInputLabel}>Start Location</Text>
-                    <View style={styles.enhancedInputRow}>
-                      <TextInput
-                        style={styles.enhancedInput}
-                        placeholder="Enter start or use current location"
-                        placeholderTextColor={colors.textMuted}
-                        value={startLocation}
-                        onChangeText={setStartLocation}
-                      />
+              {/* Autocomplete Suggestions List */}
+              {suggestions.length > 0 && (
+                <View style={styles.suggestionsContainer}>
+                  <FlatList
+                    data={suggestions}
+                    keyExtractor={(item) => item.place_id}
+                    renderItem={({ item }) => (
                       <TouchableOpacity
-                        onPress={useCurrentLocation}
-                        style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
+                        style={styles.suggestionItem}
+                        onPress={() => handleSelectPlace(item.place_id, item.description)}
                       >
-                        <Text style={styles.actionButtonText}>📍</Text>
+                        <MapPin size={16} color="#666" style={{ marginRight: 10 }} />
+                        <Text style={styles.suggestionText} numberOfLines={1}>
+                          {item.description}
+                        </Text>
                       </TouchableOpacity>
-                    </View>
-                    {user && startSuggestionsMemo.length > 0 && (
-                      <ScrollView style={styles.enhancedSuggestionsList} nestedScrollEnabled={true}>
-                        {startSuggestionsMemo.slice(0, 3).map((s) => (
-                          <TouchableOpacity
-                            key={s.id}
-                            style={styles.enhancedSuggestionItem}
-                            onPress={() => setStartLocation(s.address_text)}
-                          >
-                            <View style={styles.suggestionContent}>
-                              <Text style={styles.suggestionTitle}>{s.label}</Text>
-                              <Text style={styles.suggestionSubtitle}>{s.address_text}</Text>
-                            </View>
-                            <Text style={styles.suggestionArrow}>→</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
                     )}
-                  </View>
+                    ItemSeparatorComponent={() => <View style={styles.separator} />}
+                    style={{ maxHeight: 200 }}
+                  />
                 </View>
+              )}
+            </View>
 
-                {/* Destination */}
-                <View style={styles.locationInputWrapper}>
-                  <View style={styles.locationIconContainer}>
-                    <View style={[styles.locationDot, { backgroundColor: colors.danger }]} />
-                  </View>
-                  <View style={styles.locationInputContent}>
-                    <Text style={styles.locationInputLabel}>Destination</Text>
-                    <View style={styles.enhancedInputRow}>
-                      <TextInput
-                        style={styles.enhancedInput}
-                        placeholder="Where do you want to go?"
-                        placeholderTextColor={colors.textMuted}
-                        value={endLocation}
-                        onChangeText={setEndLocation}
-                      />
-                      <TouchableOpacity
-                        onPress={() => saveAddress('end')}
-                        style={[styles.actionButton, { backgroundColor: colors.secondary + '20' }]}
-                      >
-                        <Text style={styles.actionButtonText}>⭐</Text>
-                      </TouchableOpacity>
-                    </View>
-                    {user && endSuggestionsMemo.length > 0 && (
-                      <ScrollView style={styles.enhancedSuggestionsList} nestedScrollEnabled={true}>
-                        {endSuggestionsMemo.slice(0, 3).map((s) => (
-                          <TouchableOpacity
-                            key={s.id}
-                            style={styles.enhancedSuggestionItem}
-                            onPress={() => setEndLocation(s.address_text)}
-                          >
-                            <View style={styles.suggestionContent}>
-                              <Text style={styles.suggestionTitle}>{s.label}</Text>
-                              <Text style={styles.suggestionSubtitle}>{s.address_text}</Text>
-                            </View>
-                            <Text style={styles.suggestionArrow}>→</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    )}
-                  </View>
-                </View>
-              </View>
-
-              {/* Action Buttons */}
-              <View style={styles.actionButtonsContainer}>
-                <TouchableOpacity onPress={generateRoute} disabled={isLoading} style={styles.primaryActionButton}>
-                  <LinearGradient
-                    colors={[colors.primary, colors.secondary]}
-                    style={styles.primaryActionGradient}
-                  >
-                    {isLoading ? (
-                      <ActivityIndicator color={colors.text} size="small" />
-                    ) : (
-                      <>
-                        <Text style={styles.actionButtonIcon}>🛡️</Text>
-                        <Text style={styles.primaryActionText}>Find Safest Route</Text>
-                      </>
-                    )}
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-
-              {/* Quick Options */}
-              <View style={styles.quickOptionsContainer}>
-                <TouchableOpacity style={styles.quickOption}>
-                  <Text style={styles.quickOptionIcon}>🏠</Text>
-                  <Text style={styles.quickOptionText}>Home</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.quickOption}>
-                  <Text style={styles.quickOptionIcon}>🏢</Text>
-                  <Text style={styles.quickOptionText}>Work</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.quickOption}>
-                  <Text style={styles.quickOptionIcon}>🛒</Text>
-                  <Text style={styles.quickOptionText}>Market</Text>
-                </TouchableOpacity>
-              </View>
-            </LinearGradient>
-          </View>
+            <TouchableOpacity onPress={generateRoute} style={styles.actionBtn}>
+              {isLoading ? <ActivityIndicator color="#000" /> : <Text style={styles.actionBtnText}>ANALYZE SAFETY</Text>}
+            </TouchableOpacity>
+          </BlurView>
         </View>
       </Modal>
 
-      {/* Safety Score Card */}
-      {showSaferAlternative && !showRouteInput && (
-        <View style={styles.safetyScoreCard}>
-          <LinearGradient
-            colors={[colors.backgroundCard, colors.backgroundLight]}
-            style={styles.safetyScoreGradient}
-          >
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={() => setShowSaferAlternative(false)}
-            >
-              <Text style={styles.closeBtnText}>✕</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.minimizeButton} onPress={() => setIsSafetyCardMinimized(!isSafetyCardMinimized)}>
-              <Text style={styles.minimizeButtonText}>{isSafetyCardMinimized ? '↑' : '↓'}</Text>
-            </TouchableOpacity>
-
-            {!isSafetyCardMinimized ? (
-              // --- Expanded View ---
-              <>
-                <Text style={styles.safetyScoreTitle}>Route Safety Score</Text>
-                {overallScore > 0 ? (
-                  <>
-                    <View style={styles.scoreContainer}>
-                      <Text style={[
-                        styles.scoreNumber,
-                        { color: overallScore >= 70 ? colors.safe : overallScore >= 40 ? colors.warning : colors.danger }
-                      ]}>
-                        {overallScore}
-                      </Text>
-                      <Text style={styles.scoreMax}>/100</Text>
-                    </View>
-
-                    <Text style={styles.safetyMessage}>
-                      {overallScore >= 70
-                        ? '✅ This route is safe!'
-                        : overallScore >= 40
-                          ? '⚠️ Use caution on this route'
-                          : '🚨 High-risk areas detected'}
-                    </Text>
-                  </>
-                ) : (
-                  <View style={styles.analyzingContainer}>
-                    <ActivityIndicator color={colors.primary} />
-                    <Text style={styles.analyzingText}>Analyzing route safety...</Text>
-                  </View>
-                )}
-
-                <View style={styles.safetyActionButtons}>
-                  {overallScore > 0 && overallScore < 70 && (
-                    <TouchableOpacity onPress={findSaferRoute} style={styles.alternativeButton}>
-                      <LinearGradient colors={[colors.warning, colors.secondary]} style={styles.saferRouteBtn}>
-                        <Text style={styles.saferRouteBtnText}>✨ Find Safer Alternative</Text>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  )}
-
-                  <TouchableOpacity onPress={startNavigation} style={styles.navigationButton}>
-                    <LinearGradient colors={[colors.primary, colors.accent]} style={styles.startNavBtn}>
-                      <Text style={styles.navButtonIcon}>🧿</Text>
-                      <Text style={styles.startNavBtnText}>Start Navigation</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
+      {/* 7. Route Preview / Safety Card */}
+      {
+        showSaferAlternative && !showRouteInput && !isNavigating && (
+          <Animated.View entering={FadeInDown} style={[styles.safetyCardWrapper, { zIndex: 25 }]}>
+            <BlurView intensity={40} tint="dark" style={styles.safetyCard}>
+              <View style={styles.safetyHeader}>
+                <Text style={styles.safetyTitle}>Safety Assessment</Text>
+                <View style={styles.scoreBadge}>
+                  <Text style={styles.scoreText}>{Math.round(overallScore)}/100</Text>
                 </View>
-              </>
-            ) : (
-              // --- Minimized View ---
-              <View style={styles.minimizedContent}>
-                <Text style={styles.minimizedScoreText}>Score: {overallScore > 0 ? overallScore : '...'}</Text>
-                <TouchableOpacity onPress={startNavigation} style={styles.minimizedStartButton}>
-                  <LinearGradient colors={[colors.primary, colors.accent]} style={styles.minimizedStartGradient}>
-                    <Text style={styles.navButtonIcon}>🧿</Text>
-                    <Text style={styles.minimizedStartText}>Start</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
               </View>
-            )}
-          </LinearGradient>
-        </View>
-      )}
-
-      {/* Segment Info Modal */}
-      {selectedSegment && (
-        <Modal
-          visible={true}
-          animationType="fade"
-          transparent={true}
-          onRequestClose={() => setSelectedSegment(null)}
-        >
-          <TouchableOpacity
-            style={styles.segmentModalOverlay}
-            activeOpacity={1}
-            onPress={() => setSelectedSegment(null)}
-          >
-            <View style={styles.segmentInfoCard}>
-              <Text style={styles.segmentTitle}>
-                {selectedSegment.safetyReason?.level === 'safe' ? '✅ Safe Area' :
-                  selectedSegment.safetyReason?.level === 'caution' ? '⚠️ Caution Area' :
-                    '🚨 Unsafe Area'}
+              <Text style={styles.safetyDesc}>
+                {overallScore > 80 ? "This route is verified safe." : "Proceed with caution."}
               </Text>
 
-              <Text style={styles.segmentScore}>
-                Safety Score: {selectedSegment.actualScore}/100
-              </Text>
+              {/* Safety Intel Section */}
+              <View style={styles.intelContainer}>
+                <Text style={styles.intelHeader}>SAFETY INTEL</Text>
 
-              {selectedSegment.safetyReason && (
-                <>
-                  <View style={styles.segmentSection}>
-                    <Text style={styles.sectionTitle}>Why this rating?</Text>
-                    {selectedSegment.safetyReason.reasons.map((reason, idx) => (
-                      <Text key={idx} style={styles.bulletPoint}>• {reason}</Text>
-                    ))}
-                  </View>
-
-                  <View style={styles.segmentSection}>
-                    <Text style={styles.sectionTitle}>Recommendations:</Text>
-                    {selectedSegment.safetyReason.recommendations.map((rec, idx) => (
-                      <Text key={idx} style={styles.bulletPoint}>• {rec}</Text>
-                    ))}
-                  </View>
-
-                  {selectedSegment.safetyReason.timeOfDay && (
-                    <Text style={styles.timeInfo}>⏰ {selectedSegment.safetyReason.timeOfDay}</Text>
-                  )}
-                </>
-              )}
-            </View>
-          </TouchableOpacity>
-        </Modal>
-      )}
-
-      {/* Turn-by-Turn Navigation UI */}
-      {isNavigating && navigationSteps.length > 0 && (
-        <>
-          {/* --- NEW: Google Maps Style Top Instruction Panel --- */}
-          <View style={styles.topNavContainer}>
-            <LinearGradient
-              colors={[colors.primary, colors.secondary]}
-              style={styles.topNavPanel}
-            >
-              {currentStepIndex < navigationSteps.length && (
-                <View style={styles.topNavContent}>
-                  <View style={styles.topNavIconContainer}>
-                    <Text style={styles.topNavIcon}>
-                      {getManeuverIcon(navigationSteps[currentStepIndex]?.maneuver)}
+                {safetyIntel.police ? (
+                  <View style={styles.intelRow}>
+                    <Text style={{ fontSize: 16 }}>👮</Text>
+                    <Text style={[styles.intelText, { color: '#4ade80' }]}>
+                      {safetyIntel.police.name} ({safetyIntel.police.distance})
                     </Text>
                   </View>
-                  <View style={styles.topNavInstruction}>
-                    <Text style={styles.topNavDistance}>
-                      {distanceToNext > 0
-                        ? `${Math.round(distanceToNext)} m`
-                        : navigationSteps[currentStepIndex]?.distance.text}
-                    </Text>
-                    <Text style={styles.topNavText} numberOfLines={2}>
-                      {navigationSteps[currentStepIndex]?.html_instructions.replace(/<[^>]*>?/gm, '') || 'Continue straight'}
+                ) : null}
+
+                {safetyIntel.hospital ? (
+                  <View style={styles.intelRow}>
+                    <Text style={{ fontSize: 16 }}>🏥</Text>
+                    <Text style={[styles.intelText, { color: '#f472b6' }]}>
+                      {safetyIntel.hospital.name} ({safetyIntel.hospital.distance})
                     </Text>
                   </View>
-                </View>
-              )}
-            </LinearGradient>
-          </View>
+                ) : null}
 
-          {/* --- NEW: Google Maps Style Bottom Info Panel --- */}
-          <View style={styles.bottomNavContainer}>
-            <LinearGradient
-              colors={[colors.backgroundCard, colors.backgroundLight]}
-              style={styles.bottomNavPanel}
-            >
-              <Text style={styles.bottomNavDetails}>
-                {(navigationSteps.reduce((sum, step) => sum + step.duration.value, 0) / 1000).toFixed(1)} km
-              </Text>
-              <TouchableOpacity onPress={stopNavigation} style={styles.bottomNavEndButton}>
-                <Text style={styles.bottomNavEndButtonText}>End</Text>
+                {!safetyIntel.police && !safetyIntel.hospital && (
+                  <Text style={[styles.intelText, { color: '#fbbf24' }]}>⚠️ No immediate services nearby</Text>
+                )}
+              </View>
+              <TouchableOpacity onPress={startNavigation} style={styles.startNavBtn}>
+                <Text style={styles.startNavText}>START NAVIGATION</Text>
               </TouchableOpacity>
-            </LinearGradient>
-          </View>
+            </BlurView>
+          </Animated.View>
+        )
+      }
 
-          {/* --- NEW: Left-side circular controls --- */}
-          <View style={styles.leftNavControlsContainer}>
-            {/* Reroute Button */}
-            {isOffRoute && (
-              <TouchableOpacity style={[styles.leftNavControl, { backgroundColor: colors.warning }]} onPress={reroute}>
-                <Text style={styles.leftNavControlIcon}>🔄</Text>
-                <Text style={styles.leftNavControlText}>Reroute</Text>
-              </TouchableOpacity>
-            )}
-            {/* Time remaining */}
-            <LinearGradient colors={[colors.primary, colors.secondary]} style={styles.leftNavControl}>
-              <Text style={styles.leftNavTime}>{estimatedTime}</Text>
-              <Text style={styles.leftNavTimeLabel}>min</Text>
-            </LinearGradient>
-          </View>
-
-          {/* Reroute Button - now floating */}
-          {isOffRoute && (
-            <TouchableOpacity style={styles.rerouteButton} onPress={reroute}>
-              <Text style={styles.rerouteButtonText}>Reroute</Text>
-            </TouchableOpacity>
-          )}
-        </>
-      )}
-
-      {/* Floating Action Button */}
-      {!showRouteInput && !isNavigating && (
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() => {
-            setShowRouteInput(true);
-            setAlternativeAttempt(0);
-          }}
-        >
-          <LinearGradient
-            colors={[colors.primary, colors.secondary]}
-            style={styles.fabGradient}
-          >
-            <Text style={[styles.fabText, { color: colors.text }]}>+</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      )}
-    </View>
+    </View >
   );
 }
 
-const makeStyles = (colors: any) => StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000',
   },
   map: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
   },
-  markerContainer: {
-    alignItems: 'center',
-  },
-  marker: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: colors.text,
-  },
-  markerText: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  userLocationPuck: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#007AFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'white',
-  },
-  userLocationPuckArrow: {
-    color: 'white',
-    fontSize: 14,
-    lineHeight: 16,
-  },
-  rerouteButton: {
+
+  // Top Bar
+  topBar: {
     position: 'absolute',
-    // This style is now handled by leftNavControls
-  },
-  rerouteButtonText: { color: colors.text, fontWeight: 'bold' },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  routeInputCard: {
-    width: width * 0.9,
-    padding: 25,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    backgroundColor: colors.backgroundCard,
-  },
-  routeInputTitle: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: colors.text,
-    textAlign: 'center',
-    marginBottom: 25,
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  inputLabel: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: 8,
-  },
-  inputRow: {
+    top: Platform.OS === 'ios' ? 60 : 50,
+    left: 20,
+    right: 20,
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     gap: 10,
   },
-  input: {
+  searchBar: {
     flex: 1,
     height: 50,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    paddingHorizontal: 15,
-    color: colors.text,
-    fontSize: 16,
+    borderRadius: 25,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
-  locationBtn: {
-    minWidth: 50,
+  searchPlaceholder: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+  },
+  inlineSearchInput: {
+    flex: 1,
+    color: '#FFF',
+    fontSize: 16,
+    height: '100%',
+  },
+  searchIcon: {
+    marginRight: 10,
+    fontSize: 16,
+  },
+  searchText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+  },
+  ghostToggle: {
+    width: 80,
     height: 50,
-    paddingHorizontal: 12,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    justifyContent: 'center',
+    borderRadius: 25,
+    overflow: 'hidden',
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+    gap: 5,
   },
-  locationBtnText: {
+  ghostIcon: {
     fontSize: 18,
-    color: colors.text,
-    fontWeight: '700',
   },
-  findRouteBtn: {
-    height: 55,
-    borderRadius: 15,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  findRouteBtnText: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  cancelBtn: {
-    marginTop: 15,
-    alignItems: 'center',
-  },
-  cancelBtnText: {
-    fontSize: 16,
-  },
-  safetyScoreCard: {
+
+  // HUD
+  hudContainer: {
     position: 'absolute',
-    bottom: 30,
-    right: 20,
+    bottom: 40,
     left: 20,
+    right: 20,
+    borderRadius: 24,
+    overflow: 'hidden',
   },
-  safetyScoreGradient: {
+  hudGlass: {
     padding: 20,
-    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.4)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    backgroundColor: colors.backgroundCard,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  minimizedSafetyCard: {
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-  },
-  minimizeButton: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  minimizeButtonText: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  minimizedContent: {
+  hudRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  minimizedScoreText: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  minimizedStartButton: {
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  minimizedStartGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    gap: 8,
-  },
-  minimizedStartText: {
-    color: colors.text,
-    fontWeight: 'bold',
-  },
-  closeBtn: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 30,
-    height: 30, // Give it a fixed height
-    borderRadius: 15,
-    backgroundColor: colors.danger,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeBtnText: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  safetyScoreTitle: {
-    fontSize: 18,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: 15,
-  },
-  scoreContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'baseline',
-    marginBottom: 10,
-  },
-  scoreNumber: {
-    fontSize: 48,
-    fontWeight: '900',
-  },
-  scoreMax: {
-    fontSize: 20,
-    color: colors.textMuted,
-  },
-  safetyMessage: {
-    textAlign: 'center',
-    color: colors.text,
-    fontSize: 16,
-    marginBottom: 15,
-  },
-  analyzingContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-    marginVertical: 20,
-  },
-  analyzingText: {
-    color: colors.textSecondary,
-  },
-  saferRouteBtn: {
-    height: 45,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  saferRouteBtnText: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  fab: {
-    position: 'absolute',
-    bottom: 30,
-    right: 20,
-  },
-  fabGradient: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  fabText: {
-    fontSize: 30,
-    fontWeight: 'bold',
-  },
-  segmentModalOverlay: {
+  hudInfo: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    marginRight: 15, // Add spacing between text and status badge
+  },
+  hudLabel: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  hudValue: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+    maxWidth: 200,
+  },
+  hudStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  statusActive: {
+    backgroundColor: 'rgba(0, 240, 255, 0.1)',
+    borderColor: 'rgba(0, 240, 255, 0.3)',
+  },
+  statusGhost: {
+    backgroundColor: 'rgba(127, 0, 255, 0.1)',
+    borderColor: 'rgba(127, 0, 255, 0.3)',
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
+  // Modal styling
+  modalOverlay: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
-  segmentInfoCard: {
-    width: width * 0.85,
-    backgroundColor: colors.backgroundCard,
-    borderRadius: 20,
-    padding: 20,
+  modalGlassCard: {
+    width: width - 40,
+    padding: 24,
+    borderRadius: 30,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(20,20,20,0.6)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
-  },
-  segmentTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: colors.text,
-    marginBottom: 10,
-  },
-  segmentScore: {
-    fontSize: 16,
-    color: colors.textSecondary,
-    marginBottom: 15,
-  },
-  segmentSection: {
-    marginVertical: 10,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.primary,
-    marginBottom: 8,
-  },
-  bulletPoint: {
-    fontSize: 14,
-    color: colors.text,
-    marginVertical: 3,
-    paddingLeft: 10,
-  },
-  timeInfo: {
-    fontSize: 14,
-    color: colors.warning,
-    marginTop: 10,
-    textAlign: 'center',
-  },
-  suggestionsList: {
-    marginTop: 8,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  suggestionItem: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
-  },
-  suggestionLabel: {
-    color: colors.text,
-    fontWeight: '800',
-    marginBottom: 2,
-  },
-  suggestionAddress: {
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  // Enhanced Modal Styles
-  enhancedModalContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'flex-end',
-  },
-  modalBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-  },
-  enhancedRouteCard: {
-    maxHeight: height * 0.8,
-    backgroundColor: colors.backgroundCard,
-    borderTopLeftRadius: 25,
-    borderTopRightRadius: 25,
-    paddingTop: 20,
-    paddingBottom: 30,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: -5 },
-    shadowOpacity: 0.3,
-    shadowRadius: 15,
-    elevation: 20,
-  },
-  cardGradient: {
-    borderTopLeftRadius: 25,
-    borderTopRightRadius: 25,
-    paddingHorizontal: 20,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 25,
-  },
-  headerContent: {
-    flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
-  },
-  headerIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: colors.primary + '20',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
-  },
-  headerIconText: {
-    fontSize: 24,
+    marginBottom: 20,
   },
   modalTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: colors.text,
-    marginBottom: 4,
-  },
-  modalSubtitle: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  closeButton: {
-    width: 35,
-    height: 35,
-    borderRadius: 17.5,
-    backgroundColor: colors.danger + '20',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeButtonText: {
-    color: colors.danger,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  locationInputsContainer: {
-    marginBottom: 25,
-  },
-  locationInputWrapper: {
-    flexDirection: 'row',
-    marginBottom: 20,
-  },
-  locationIconContainer: {
-    alignItems: 'center',
-    paddingTop: 25,
-    marginRight: 15,
-  },
-  locationDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  locationLine: {
-    width: 2,
-    height: 30,
-    backgroundColor: colors.textMuted + '40',
-    marginTop: 5,
-  },
-  locationInputContent: {
-    flex: 1,
-  },
-  locationInputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 8,
-  },
-  enhancedInputRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  enhancedInput: {
-    flex: 1,
-    height: 50,
-    backgroundColor: colors.background,
-    borderRadius: 15,
-    paddingHorizontal: 15,
-    color: colors.text,
-    fontSize: 16,
-    borderWidth: 1.5,
-    borderColor: colors.primary + '20',
-  },
-  actionButton: {
-    minWidth: 50,
-    height: 50,
-    borderRadius: 15,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  actionButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  enhancedSuggestionsList: {
-    maxHeight: 120,
-    marginTop: 10,
-    backgroundColor: colors.background + '80',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.primary + '15',
-  },
-  enhancedSuggestionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.primary + '10',
-  },
-  suggestionContent: {
-    flex: 1,
-  },
-  suggestionTitle: {
-    color: colors.text,
-    fontWeight: '700',
-    fontSize: 14,
-    marginBottom: 2,
-  },
-  suggestionSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  suggestionArrow: {
-    color: colors.primary,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  actionButtonsContainer: {
-    marginBottom: 20,
-  },
-  primaryActionButton: {
-    height: 55,
-    borderRadius: 18,
-    overflow: 'hidden',
-  },
-  primaryActionGradient: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-  },
-  actionButtonIcon: {
+    color: '#FFF',
     fontSize: 20,
+    fontWeight: 'bold',
   },
-  primaryActionText: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  quickOptionsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
+  // Intel Styles
+  intelContainer: {
+    marginTop: 15,
     paddingTop: 15,
     borderTopWidth: 1,
-    borderTopColor: colors.primary + '15',
+    borderTopColor: 'rgba(255,255,255,0.1)',
   },
-  quickOption: {
+  intelHeader: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 2,
+    marginBottom: 8,
+  },
+  intelRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 6,
     gap: 8,
   },
-  quickOptionIcon: {
-    fontSize: 24,
-  },
-  quickOptionText: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  // Safety Action Buttons
-  safetyActionButtons: {
-    gap: 12,
-  },
-  alternativeButton: {
-    height: 45,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  navigationButton: {
-    height: 50,
-    borderRadius: 15,
-    overflow: 'hidden',
-  },
-  startNavBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-  },
-  navButtonIcon: {
+  intelText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '500',
+  }
+  ,
+  closeText: {
+    color: 'rgba(255,255,255,0.5)',
     fontSize: 20,
   },
-  startNavBtnText: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  // --- NEW: Google Maps Style Navigation UI ---
-  topNavContainer: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 50 : 40,
-    left: 15,
-    right: 15,
-    zIndex: 1000,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 15,
-  },
-  topNavPanel: {
-    borderRadius: 20,
-    padding: 15,
-  },
-  topNavContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  inputStack: {
+    marginBottom: 20,
     gap: 15,
   },
-  topNavIconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  topNavIcon: {
-    fontSize: 32,
-    color: colors.text,
-  },
-  topNavInstruction: {
-    flex: 1,
-  },
-  topNavDistance: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: colors.text,
-  },
-  topNavText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text,
-    opacity: 0.9,
-  },
-  bottomNavContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    zIndex: 1000,
+  glassInputWrapper: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 15,
     padding: 15,
-  },
-  bottomNavPanel: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -5 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 10,
   },
-  bottomNavDetails: {
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  bottomNavEndButton: {
-    backgroundColor: colors.danger,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-  },
-  bottomNavEndButtonText: {
-    color: colors.text,
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  // --- NEW: Left Nav Controls ---
-  leftNavControlsContainer: {
+  inputLabel: {
+    color: 'rgba(255,255,255,0.3)',
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 5,
     position: 'absolute',
-    bottom: 100,
+    top: 5,
     left: 15,
-    zIndex: 1000,
-    gap: 10,
+  },
+  glassInput: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+    marginTop: 10,
+  },
+  actionBtn: {
+    backgroundColor: '#00F0FF',
+    borderRadius: 15,
+    paddingVertical: 16,
     alignItems: 'center',
   },
-  leftNavControl: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  actionBtnText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+
+  // Navigation Overlay
+  navOverlay: {
+    position: 'absolute',
+    top: 60,
+    left: 20,
+    right: 20,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  navGlassPanel: {
+    padding: 20,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    alignItems: 'center',
+  },
+  navInstruction: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  navMeta: {
+    flexDirection: 'row',
+    gap: 20,
+    marginBottom: 15,
+  },
+  // Navigation Redesign Styles
+  navTopBanner: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 50,
+    left: 20,
+    right: 20,
+    backgroundColor: '#007AFF', // Professional Navigation Blue
+    borderRadius: 16,
+    padding: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+    zIndex: 100,
+  },
+  turnIconBox: {
+    marginRight: 15,
+  },
+  turnTextBox: {
+    flex: 1,
+  },
+  turnInstruction: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  turnSubtext: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+
+  navBottomCard: {
+    position: 'absolute',
+    bottom: 90, // Raised above floating tab bar
+    left: 20,
+    right: 20,
+    marginHorizontal: 0, // Already handled by left/right: 20
+    backgroundColor: '#FFFFFF', // White Card
+    borderRadius: 20, // Full rounded corners for floating look
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 8,
+    zIndex: 100,
+  },
+  navStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  navTime: {
+    color: '#0F9D58', // Green Text
+    fontSize: 28,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  navMetaText: {
+    color: '#333',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  navExitBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#EF4444', // Red Exir
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Safety Card
+  safetyCardWrapper: {
+    position: 'absolute',
+    bottom: 40,
+    left: 20,
+    right: 20,
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
+  safetyCard: {
+    padding: 20,
+    backgroundColor: 'rgba(20,20,20,0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  safetyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  safetyTitle: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  scoreBadge: {
+    backgroundColor: 'rgba(0,255,0,0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4ADE80',
+  },
+  scoreText: {
+    color: '#4ADE80',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  safetyDesc: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    marginBottom: 15,
+  },
+  startNavBtn: {
+    backgroundColor: '#7F00FF',
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  startNavText: {
+    color: '#FFF',
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+
+  // Navigation Puck
+  puckContainer: {
+    width: 30,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  puckGlow: {
+    position: 'absolute',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0, 122, 255, 0.3)',
+  },
+  puckCore: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#007AFF',
+    borderWidth: 2,
+    borderColor: '#FFF',
+  },
+  markerBadge: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markerGlass: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderWidth: 2,
+    borderColor: '#00F0FF',
+  },
+  markerText: {
+    color: '#00F0FF',
+    fontWeight: '800',
+  },
+
+  // Recenter Button
+  recenterBtn: {
+    position: 'absolute',
+    bottom: 180,
+    right: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFF',
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+    zIndex: 90,
+  },
+
+  navRecenterBtn: {
+    position: 'absolute',
+    bottom: 220,
+    right: 20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+    zIndex: 100,
+  },
+
+  // Autocomplete Styles
+  suggestionsContainer: {
+    position: 'absolute',
+    top: 130, // Adjust based on input stack height
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFF',
+    borderRadius: 15,
+    marginTop: 5,
+    elevation: 10,
+    zIndex: 1000,
+    overflow: 'hidden',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+  },
+  suggestionText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+    flex: 1,
+  },
+  separator: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+  },
+
+  headerSuggestionsContainer: {
+    position: 'absolute',
+    top: 110,
+    left: 20,
+    right: 20,
+    backgroundColor: '#FFF',
+    borderRadius: 15,
+    elevation: 20,
+    zIndex: 2000,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+
+  // --- SAFETY MARKERS ---
+  safetyMarkerBubble: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
+  },
+  calloutContainer: {
+    width: 200,
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
     shadowRadius: 5,
-    elevation: 8,
+    elevation: 10,
+    marginBottom: 5,
   },
-  leftNavControlIcon: {
-    fontSize: 24,
-  },
-  leftNavControlText: {
-    color: colors.text,
-    fontSize: 10,
+  calloutTitle: {
     fontWeight: 'bold',
+    fontSize: 14,
+    marginBottom: 2,
+    textAlign: 'center',
+    color: '#000'
   },
-  leftNavTime: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: '900',
+  calloutSub: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 8,
   },
-  leftNavTimeLabel: {
-    color: colors.text,
-    fontSize: 10,
-    fontWeight: '600',
-    marginTop: -4,
+  calloutBtn: {
+    backgroundColor: '#ef4444',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    width: '100%',
+    alignItems: 'center',
   },
+  calloutBtnText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 11,
+  },
+
 });

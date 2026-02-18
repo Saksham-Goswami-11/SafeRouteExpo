@@ -1,7 +1,7 @@
 import { SafetySegment, SafetyReason } from './safetyAnalysis';
 import { searchNearbyPlaces } from '../services/placesService';
 
-// Interface for AI Backend Response (kept for compatibility structure)
+// Interface for AI Backend Response (Updated for Transparency)
 interface AIBackendResponse {
   success: boolean;
   safetyScore: number;
@@ -18,6 +18,12 @@ interface AIBackendResponse {
   };
   timestamp: string;
   reasoning?: string[];
+  // NEW: detailed factors
+  safetyFactors: {
+    police: { name: string, distance: string, location: { latitude: number, longitude: number } } | null;
+    hospital: { name: string, distance: string, location: { latitude: number, longitude: number } } | null;
+    lighting: string;
+  };
 }
 
 /**
@@ -47,16 +53,20 @@ export class AISafetyAnalyzer {
     const hour = new Date().getHours();
     let timeScore = 100;
     let timeReason = '';
+    let lightingStatus = 'Good';
 
     if (hour >= 22 || hour <= 5) {
       timeScore = 40; // High risk at night
       timeReason = 'Late night hours - High Caution';
+      lightingStatus = 'Limited (Night)';
     } else if (hour >= 19 || hour <= 21) {
       timeScore = 70; // Moderate risk evening
       timeReason = 'Evening hours - Moderate Caution';
+      lightingStatus = 'Moderate (Evening)';
     } else {
       timeScore = 95; // Day time safe
       timeReason = 'Daylight hours - Generally Safe';
+      lightingStatus = 'Good (Daylight)';
     }
 
     // 2. Proximity to Safety Services (Police/Hospitals)
@@ -64,18 +74,34 @@ export class AISafetyAnalyzer {
     let placesReason = '';
     let nearbySafePlaces: string[] = [];
 
+    // Safety Intel Objects
+    let nearestPolice = null;
+    let nearestHospital = null;
+
     try {
       // Check for police stations within 2km
-      const policeStations = await searchNearbyPlaces(latitude, longitude, 'police', 2000);
+      const policeStations = await searchNearbyPlaces(latitude, longitude, 'police', 3000); // 3km radius
       if (policeStations.length > 0) {
         placesScore += 20;
+        const p = policeStations[0];
+        nearestPolice = {
+          name: p.displayName?.text || 'Local Police Station',
+          distance: p.distance ? `${p.distance.toFixed(1)} km` : 'Nearby',
+          location: p.location
+        };
         nearbySafePlaces.push('Police Station nearby');
       }
 
       // Check for hospitals within 2km
-      const hospitals = await searchNearbyPlaces(latitude, longitude, 'hospital', 2000);
+      const hospitals = await searchNearbyPlaces(latitude, longitude, 'hospital', 3000);
       if (hospitals.length > 0) {
         placesScore += 10;
+        const h = hospitals[0];
+        nearestHospital = {
+          name: h.displayName?.text || 'Medical Center',
+          distance: h.distance ? `${h.distance.toFixed(1)} km` : 'Nearby',
+          location: h.location
+        };
         nearbySafePlaces.push('Hospital nearby');
       }
 
@@ -100,7 +126,12 @@ export class AISafetyAnalyzer {
       confidence: 0.8,
       location: { latitude, longitude },
       timestamp: new Date().toISOString(),
-      reasoning: reasoning
+      reasoning: reasoning,
+      safetyFactors: {
+        police: nearestPolice,
+        hospital: nearestHospital,
+        lighting: lightingStatus
+      }
     };
   }
 
@@ -200,7 +231,9 @@ export class AISafetyAnalyzer {
       safetyScore: this.mapScoreToCategory(safetyScore),
       color: getEnhancedSafetyColor(safetyScore),
       safetyReason,
-      actualScore: safetyScore
+      actualScore: safetyScore,
+      // Pass the details through
+      safetyFactors: aiAnalysis.safetyFactors
     };
   }
 
@@ -264,7 +297,8 @@ export class AISafetyAnalyzer {
           reasons: ['Analysis unavailable'],
           recommendations: ['Stay alert']
         },
-        actualScore: 50
+        actualScore: 50,
+        safetyFactors: { police: null, hospital: null, lighting: 'Unknown' }
       });
     }
 

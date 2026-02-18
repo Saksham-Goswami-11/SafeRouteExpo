@@ -22,21 +22,23 @@ export interface AIConfig {
 
 // 🔧 UPDATE THIS WITH YOUR ACTUAL RENDER URL
 const AI_CONFIG: AIConfig = {
-  baseUrl: "http://YOUR_COMPUTER_IP:5000", // 👈 TEMPORARY CHANGE FOR LOCAL TESTING
-  
+  // 🔧 UPDATE THIS WITH YOUR ACTUAL RENDER URL OR LOCAL BACKEND
+  // If you don't have a backend, the app will use local fallback algorithms.
+  baseUrl: "http://localhost:5000",
+
   endpoints: {
-    analyzeRoute: "/api/analyze-route", // 👈 Try this first - common pattern
-    safetyScore: "/api/safety-score", 
+    analyzeRoute: "/api/analyze-route",
+    safetyScore: "/api/safety-score",
     criminalRecords: "/api/criminal-records",
     newsAnalysis: "/api/news-analysis"
   },
-  
+
   settings: {
-    timeout: 15000, // 15 seconds
-    retryAttempts: 3,
-    cacheTime: 5 * 60 * 1000, // 5 minutes
+    timeout: 5000,
+    retryAttempts: 0, // Fail fast if no backend
+    cacheTime: 5 * 60 * 1000,
     enableCaching: true,
-    enableFallback: true
+    enableFallback: true // Critical: Ensure fallback is on
   }
 };
 
@@ -59,8 +61,8 @@ export function getAIConfig(): AIConfig {
  * Check if AI backend is properly configured
  */
 export function isAIConfigured(): boolean {
-  return AI_CONFIG.baseUrl !== "https://your-render-url.onrender.com" && 
-         AI_CONFIG.baseUrl.includes('render.com');
+  return AI_CONFIG.baseUrl !== "https://your-render-url.onrender.com" &&
+    AI_CONFIG.baseUrl.includes('render.com');
 }
 
 /**
@@ -93,9 +95,9 @@ export function setupAIBackend(renderUrl: string): void {
     console.warn('⚠️ Invalid Render URL provided');
     return;
   }
-  
+
   updateAIConfig(renderUrl);
-  
+
   // Test configuration
   console.log('🧪 AI Backend Configuration:');
   console.log(`   Base URL: ${AI_CONFIG.baseUrl}`);

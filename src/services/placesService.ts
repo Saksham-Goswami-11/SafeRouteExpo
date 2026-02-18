@@ -1,4 +1,6 @@
-import { EXPO_PUBLIC_GOOGLE_PLACES_API_KEY, EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY } from '@env';
+// Access environment variables directly from process.env
+const EXPO_PUBLIC_GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY;
+const EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY;
 
 /**
  * This is your Google Cloud API Key.
@@ -22,9 +24,9 @@ const getDistance = (
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1 * (Math.PI / 180)) *
-      Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c; // Distance in km
 };
@@ -111,80 +113,79 @@ export async function searchNearbyPlaces(
 
   placesWithDistance.sort((a, b) => a.distance - b.distance);
 
-  
 
-    return placesWithDistance;
 
-  }
+  return placesWithDistance;
 
-  
+}
 
-  const GEOCODING_API_ENDPOINT = 'https://maps.googleapis.com/maps/api/geocode/json';
 
-  
 
-  /**
+const GEOCODING_API_ENDPOINT = 'https://maps.googleapis.com/maps/api/geocode/json';
 
-   * Converts geographic coordinates into a human-readable address using Google's Geocoding API.
 
-   * @param latitude - The latitude of the location.
 
-   * @param longitude - The longitude of the location.
+/**
 
-   * @returns A promise that resolves to the formatted address string.
+ * Converts geographic coordinates into a human-readable address using Google's Geocoding API.
 
-   */
+ * @param latitude - The latitude of the location.
 
-  export async function reverseGeocode(latitude: number, longitude: number): Promise<string> {
+ * @param longitude - The longitude of the location.
 
-      if (!EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY) {
+ * @returns A promise that resolves to the formatted address string.
 
-        console.error('Google Geocoding API Key is not configured.');
+ */
 
-        throw new Error('API key is missing.');
+export async function reverseGeocode(latitude: number, longitude: number): Promise<string> {
 
-      }
+  if (!EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY) {
 
-  
+    console.error('Google Geocoding API Key is not configured.');
 
-      const url = `${GEOCODING_API_ENDPOINT}?latlng=${latitude},${longitude}&key=${EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY}`;
-
-  
-
-    const response = await fetch(url);
-
-  
-
-    if (!response.ok) {
-
-      const errorData = await response.json();
-
-      console.error('Google Geocoding API Error:', errorData);
-
-      throw new Error('Failed to reverse geocode.');
-
-    }
-
-  
-
-    const data = await response.json();
-
-  
-
-    if (data.results && data.results.length > 0) {
-
-      // Return the best-formatted address from the results
-
-      return data.results[0].formatted_address;
-
-    } else {
-
-      console.warn('Reverse geocoding returned no results for the given coordinates.');
-
-      return 'Address not found';
-
-    }
+    throw new Error('API key is missing.');
 
   }
 
-  
+
+
+  const url = `${GEOCODING_API_ENDPOINT}?latlng=${latitude},${longitude}&key=${EXPO_PUBLIC_GOOGLE_GEOCODING_API_KEY}`;
+
+
+
+  const response = await fetch(url);
+
+
+
+  if (!response.ok) {
+
+    const errorData = await response.json();
+
+    console.error('Google Geocoding API Error:', errorData);
+
+    throw new Error('Failed to reverse geocode.');
+
+  }
+
+
+
+  const data = await response.json();
+
+
+
+  if (data.results && data.results.length > 0) {
+
+    // Return the best-formatted address from the results
+
+    return data.results[0].formatted_address;
+
+  } else {
+
+    console.warn('Reverse geocoding returned no results for the given coordinates.');
+
+    return 'Address not found';
+
+  }
+
+}
+

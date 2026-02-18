@@ -1,0 +1,75 @@
+/* src/components/Navbar.module.css */
+.navbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 70px;
+  background: var(--background);
+  border-bottom: 1px solid var(--border);
+  z-index: 3000; /* Sabse upar */
+}
+
+.navContainer {
+  max-width: 1200px;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+}
+
+.logoSection { display: flex; align-items: center; gap: 0.8rem; }
+.backBtn { background: none; border: none; font-size: 1.5rem; color: var(--foreground); cursor: pointer; }
+.logo { font-size: 1.4rem; font-weight: 900; text-decoration: none; color: var(--foreground); }
+
+.navSearchForm { flex: 1; margin: 0 1rem; }
+.navSearchInput {
+  width: 100%;
+  padding: 0.6rem 1rem;
+  background: var(--card-bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--foreground);
+  font-size: 0.9rem;
+}
+
+.menuBtn {
+  background: var(--foreground);
+  color: var(--background);
+  border: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+/* Fix for Overlapping: Solid background and full height */
+.mobileMenu {
+  position: fixed;
+  top: 70px; left: 0; right: 0; bottom: 0;
+  background: var(--background); /* Solid background color */
+  z-index: 2999;
+  padding: 2rem;
+  transform: translateX(100%);
+  transition: transform 0.3s ease-in-out;
+  overflow-y: auto;
+}
+
+.menuOpen { transform: translateX(0); }
+
+.mobileLinks { display: flex; flex-direction: column; gap: 1.8rem; }
+.mobileLinks a { font-size: 2rem; font-weight: 800; text-decoration: none; color: var(--foreground); letter-spacing: -1px; }
+
+.mobileLogout {
+  background: #e53e3e;
+  color: white;
+  border: none;
+  padding: 1.2rem;
+  border-radius: 12px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-top: 1rem;
+}
+
+.menuFooter { margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--border); }

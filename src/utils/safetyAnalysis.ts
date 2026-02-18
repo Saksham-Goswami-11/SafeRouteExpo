@@ -8,11 +8,16 @@ export interface SafetyReason {
 }
 
 export interface SafetySegment {
-  coordinates: Array<{latitude: number; longitude: number}>;
+  coordinates: Array<{ latitude: number; longitude: number }>;
   safetyScore: number;
   color: string;
   safetyReason?: SafetyReason;
   actualScore?: number;
+  safetyFactors?: {
+    police: { name: string, distance: string, location: { latitude: number, longitude: number } } | null;
+    hospital: { name: string, distance: string, location: { latitude: number, longitude: number } } | null;
+    lighting: string;
+  };
 }
 
 const SAFETY_COLORS = {
@@ -71,7 +76,7 @@ const safetyReasonsDatabase = {
 export const getRandomSafetyReason = (score: number): SafetyReason => {
   let level: 'safe' | 'caution' | 'unsafe';
   let timeMessage = '';
-  
+
   const hour = new Date().getHours();
   if (hour >= 20 || hour <= 6) {
     timeMessage = 'Night time - Extra caution advised';
@@ -81,7 +86,7 @@ export const getRandomSafetyReason = (score: number): SafetyReason => {
   } else if (hour >= 17 && hour <= 19) {
     timeMessage = 'Evening rush hour - High activity';
   }
-  
+
   if (score >= 70) {
     level = 'safe';
   } else if (score >= 40) {
@@ -89,13 +94,13 @@ export const getRandomSafetyReason = (score: number): SafetyReason => {
   } else {
     level = 'unsafe';
   }
-  
+
   const reasonsArray = safetyReasonsDatabase[level].reasons;
   const recommendationsArray = safetyReasonsDatabase[level].recommendations;
-  
+
   const randomReasons = reasonsArray[Math.floor(Math.random() * reasonsArray.length)];
   const randomRecommendations = recommendationsArray[Math.floor(Math.random() * recommendationsArray.length)];
-  
+
   return {
     level,
     reasons: randomReasons,
@@ -107,7 +112,7 @@ export const getRandomSafetyReason = (score: number): SafetyReason => {
 export const calculateSegmentSafetyScore = (): number => {
   // Generate realistic distribution of safety scores
   const random = Math.random();
-  
+
   if (random < 0.3) {
     // 30% chance of safe area (70-100)
     return 70 + Math.floor(Math.random() * 31);
@@ -121,23 +126,23 @@ export const calculateSegmentSafetyScore = (): number => {
 };
 
 export const analyzeRouteSegments = (
-  coordinates: Array<{latitude: number; longitude: number}>,
+  coordinates: Array<{ latitude: number; longitude: number }>,
   useImproved: boolean = false
 ): SafetySegment[] => {
   const segments: SafetySegment[] = [];
   const segmentSize = Math.max(5, Math.floor(coordinates.length / 15));
-  
+
   for (let i = 0; i < coordinates.length - 1; i += segmentSize) {
     const endIndex = Math.min(i + segmentSize, coordinates.length - 1);
     const segmentCoords = coordinates.slice(i, endIndex + 1);
-    
-    const actualScore = useImproved ? 
+
+    const actualScore = useImproved ?
       70 + Math.floor(Math.random() * 31) : // Improved route: 70-100
       calculateSegmentSafetyScore(); // Normal distribution
-    
+
     const safetyScore = actualScore >= 70 ? 3 : actualScore >= 40 ? 2 : 1;
     const safetyReason = getRandomSafetyReason(actualScore);
-    
+
     segments.push({
       coordinates: segmentCoords,
       safetyScore: safetyScore as keyof typeof SAFETY_COLORS,
@@ -146,31 +151,31 @@ export const analyzeRouteSegments = (
       actualScore: actualScore
     });
   }
-  
+
   return segments;
 };
 
 export const calculateOverallSafetyScore = (segments: SafetySegment[]): number => {
   if (segments.length === 0) return 0;
-  
+
   const totalScore = segments.reduce((sum, seg) => sum + (seg.actualScore || 50), 0);
   return Math.round(totalScore / segments.length);
 };
 
 // Generate alternative route by adding waypoints
 export const generateAlternativeRoute = (
-  start: {latitude: number; longitude: number},
-  end: {latitude: number; longitude: number},
+  start: { latitude: number; longitude: number },
+  end: { latitude: number; longitude: number },
   attemptNumber: number
-): Array<{latitude: number; longitude: number}> => {
+): Array<{ latitude: number; longitude: number }> => {
   const waypoints = [start];
-  
+
   const latDiff = (end.latitude - start.latitude) / 3;
   const lngDiff = (end.longitude - start.longitude) / 3;
-  
+
   // Create offset waypoints based on attempt number
   const offsetMultiplier = attemptNumber * 0.015;
-  
+
   if (attemptNumber === 1) {
     // First alternative: slight detour to the right
     waypoints.push({
@@ -191,14 +196,14 @@ export const generateAlternativeRoute = (
       longitude: start.longitude + lngDiff + Math.sin(angle) * offsetMultiplier * 2
     });
   }
-  
+
   // Add another waypoint closer to destination
   waypoints.push({
     latitude: start.latitude + latDiff * 2,
     longitude: start.longitude + lngDiff * 2
   });
-  
+
   waypoints.push(end);
-  
+
   return waypoints;
 };

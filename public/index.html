@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rescue Dashboard | Amba Safety</title>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+
+    <style>
+        /* Modern Reset & Base Styles */
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+
+        /* Map Container */
+        #map {
+            height: 100vh;
+            width: 100vw;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        /* Tactical Overlay UI */
+        #ui-layer {
+            position: absolute;
+            z-index: 10;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 450px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            pointer-events: none;
+            /* Allow clicks to pass through to map where possible */
+        }
+
+        /* Glassmorphism Cards */
+        .card {
+            background: rgba(20, 20, 20, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            pointer-events: auto;
+            color: #fff;
+            transition: transform 0.2s ease;
+        }
+
+        /* Header Status Bar (Top) */
+        #status-bar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: none;
+        }
+
+        .status-badge {
+            background: rgba(255, 59, 48, 0.9);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 30px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.9rem;
+            box-shadow: 0 4px 15px rgba(255, 59, 48, 0.4);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            pointer-events: auto;
+        }
+
+        .status-badge.safe {
+            background: rgba(52, 199, 89, 0.9);
+            box-shadow: 0 4px 15px rgba(52, 199, 89, 0.4);
+        }
+
+        /* Pulse Animation for Live Dot */
+        .pulse-dot {
+            width: 10px;
+            height: 10px;
+            background-color: white;
+            border-radius: 50%;
+            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+
+        @keyframes pulse-ring {
+            0% {
+                transform: scale(0.8);
+                box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
+            }
+
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
+            }
+
+            100% {
+                transform: scale(0.8);
+                box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+            }
+        }
+
+        /* Info Card Typography */
+        h2 {
+            margin: 0 0 4px 0;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #9ca3af;
+        }
+
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-top: 8px;
+        }
+
+        .big-data {
+            font-size: 2rem;
+            font-weight: 800;
+            color: #fff;
+            line-height: 1;
+        }
+
+        .unit {
+            font-size: 0.9rem;
+            color: #9ca3af;
+            font-weight: 600;
+            margin-left: 2px;
+        }
+
+        .label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #6b7280;
+            font-weight: 700;
+        }
+
+        .separator {
+            width: 1px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            margin: 0 15px;
+        }
+
+        /* User Detail */
+        .user-info {
+            font-size: 0.9rem;
+            color: #e5e7eb;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .user-icon {
+            color: #3b82f6;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Header Overlay -->
+    <div id="status-bar">
+        <div id="status-badge" class="status-badge">
+            <div class="pulse-dot"></div>
+            <span id="status-text">CONNECTING...</span>
+        </div>
+    </div>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Bottom UI Card -->
+    <div id="ui-layer">
+        <div class="card">
+            <div class="data-row" style="margin-top: 0; margin-bottom: 12px; align-items: center;">
+                <div class="user-info">
+                    <svg class="user-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                        fill="currentColor">
+                        <path
+                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" />
+                    </svg>
+                    <span id="victim-name">Unknown User</span>
+                </div>
+                <span id="update-time" style="font-size: 0.75rem; color: #6b7280;">Waiting for signal...</span>
+            </div>
+
+            <div style="height: 1px; background: rgba(255,255,255,0.1); width: 100%; margin-bottom: 12px;"></div>
+
+            <div class="data-row">
+                <div>
+                    <div class="label">DISTANCE</div>
+                    <div><span id="distance-val" class="big-data">--</span><span class="unit">km</span></div>
+                </div>
+                <div class="separator"></div>
+                <div>
+                    <div class="label">ETA</div>
+                    <div><span id="duration-val" class="big-data">--</span><span class="unit">min</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK (Modular v9 via CDN) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // --- 1. CONFIGURATION ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyD1546iT67TLA8_uPM_3z0uUJaR5XICqsY",
+            authDomain: "amba-safety.firebaseapp.com",
+            projectId: "amba-safety",
+            storageBucket: "amba-safety.firebasestorage.app",
+            messagingSenderId: "927322494760",
+            appId: "1:927322494760:web:cb273548f5b094aa05a21d",
+            measurementId: "G-JW376JN11V"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // --- 2. GOOGLE MAPS SETUP ---
+        // We expose these to the global scope so our script below can access them if needed, 
+        // though we'll try to keep logic contained.
+        window.initMap = initMap;
+
+        let map;
+        let directionsService;
+        let directionsRenderer;
+        let victimMarker;
+        let observerMarker;
+        let currentVictimPos = null;
+        let currentObserverPos = null;
+
+        // Custom Map Style: Silver/Grey (Tactical)
+        const silverMapStyle = [
+            { "elementType": "geometry", "stylers": [{ "color": "#f5f5f5" }] },
+            { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
+            { "elementType": "labels.text.fill", "stylers": [{ "color": "#616161" }] },
+            { "elementType": "labels.text.stroke", "stylers": [{ "color": "#f5f5f5" }] },
+            { "featureType": "administrative.land_parcel", "elementType": "labels.text.fill", "stylers": [{ "color": "#bdbdbd" }] },
+            { "featureType": "poi", "elementType": "geometry", "stylers": [{ "color": "#eeeeee" }] },
+            { "featureType": "poi", "elementType": "labels.text.fill", "stylers": [{ "color": "#757575" }] },
+            { "featureType": "poi.park", "elementType": "geometry", "stylers": [{ "color": "#e5e5e5" }] },
+            { "featureType": "poi.park", "elementType": "labels.text.fill", "stylers": [{ "color": "#9e9e9e" }] },
+            { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#ffffff" }] },
+            { "featureType": "road.arterial", "elementType": "labels.text.fill", "stylers": [{ "color": "#757575" }] },
+            { "featureType": "road.highway", "elementType": "geometry", "stylers": [{ "color": "#dadada" }] },
+            { "featureType": "road.highway", "elementType": "labels.text.fill", "stylers": [{ "color": "#616161" }] },
+            { "featureType": "road.local", "elementType": "labels.text.fill", "stylers": [{ "color": "#9e9e9e" }] },
+            { "featureType": "transit.line", "elementType": "geometry", "stylers": [{ "color": "#e5e5e5" }] },
+            { "featureType": "transit.station", "elementType": "geometry", "stylers": [{ "color": "#eeeeee" }] },
+            { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#c9c9c9" }] },
+            { "featureType": "water", "elementType": "labels.text.fill", "stylers": [{ "color": "#9e9e9e" }] }
+        ];
+
+        function initMap() {
+            // Check if Google Maps is loaded
+            if (!window.google) {
+                console.error("Google Maps API not loaded");
+                return;
+            }
+
+            map = new google.maps.Map(document.getElementById("map"), {
+                zoom: 12,
+                center: { lat: 20.5937, lng: 78.9629 }, // Default Center (India)
+                styles: silverMapStyle,
+                disableDefaultUI: true, // Clean look
+                zoomControl: true,
+            });
+
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({
+                map: map,
+                suppressMarkers: true, // We will use custom markers
+                polylineOptions: {
+                    strokeColor: "#3b82f6", // Bright Blue Route
+                    strokeWeight: 6,
+                    strokeOpacity: 0.8
+                }
+            });
+
+            // Start Logic
+            startTracking();
+        }
+
+        // --- 3. CORE LOGIC ---
+        function startTracking() {
+            // Get Observer (Parent) Location
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(
+                    (position) => {
+                        const pos = {
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude,
+                        };
+                        currentObserverPos = pos;
+                        updateObserverMarker(pos);
+                        calculateRoute(); // Recalculate if parent moves
+                    },
+                    () => {
+                        console.warn("Error getting parent location");
+                    },
+                    { enableHighAccuracy: true }
+                );
+            }
+
+            // Get Victim ID from URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const victimId = urlParams.get('id');
+
+            if (!victimId) {
+                document.getElementById('status-text').innerText = "INVALID LINK";
+                return;
+            }
+
+            // Listen to Firestore
+            onSnapshot(doc(db, "active_alerts", victimId), (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+
+                    // Update Status Badge
+                    const statusEl = document.getElementById('status-text');
+                    const badgeEl = document.getElementById('status-badge');
+
+                    if (data.status === 'ACTIVE') {
+                        statusEl.innerText = "LIVE TRACKING ACTIVE";
+                        badgeEl.classList.remove('safe');
+                    } else {
+                        statusEl.innerText = "ALERT RESOLVED";
+                        badgeEl.classList.add('safe');
+                    }
+
+                    // Update UI info
+                    document.getElementById('victim-name').innerText = data.userName || "Unknown User";
+                    if (data.lastUpdated) {
+                        // Handle Firestore Timestamp or Date
+                        const date = data.lastUpdated.toDate ? data.lastUpdated.toDate() : new Date(data.lastUpdated);
+                        document.getElementById('update-time').innerText = "Updated: " + date.toLocaleTimeString();
+                    }
+
+                    // Update Map
+                    if (data.coordinates) {
+                        const victimPos = {
+                            lat: data.coordinates.latitude,
+                            lng: data.coordinates.longitude
+                        };
+                        currentVictimPos = victimPos;
+                        updateVictimMarker(victimPos);
+                        calculateRoute();
+                    }
+                } else {
+                    document.getElementById('status-text').innerText = "ALERT NOT FOUND";
+                }
+            });
+        }
+
+        function updateVictimMarker(pos) {
+            if (!victimMarker) {
+                victimMarker = new google.maps.Marker({
+                    position: pos,
+                    map: map,
+                    title: "Victim",
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 10,
+                        fillColor: "#ff3b30",
+                        fillOpacity: 1,
+                        strokeColor: "white",
+                        strokeWeight: 3,
+                    },
+                    animation: google.maps.Animation.DROP
+                });
+            } else {
+                victimMarker.setPosition(pos);
+            }
+
+            // If we don't have observer pos yet, center on victim
+            if (!currentObserverPos) {
+                map.panTo(pos);
+            }
+        }
+
+        function updateObserverMarker(pos) {
+            if (!observerMarker) {
+                observerMarker = new google.maps.Marker({
+                    position: pos,
+                    map: map,
+                    title: "You (Observer)",
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 8,
+                        fillColor: "#3b82f6",
+                        fillOpacity: 1,
+                        strokeColor: "white",
+                        strokeWeight: 2,
+                    }
+                });
+            } else {
+                observerMarker.setPosition(pos);
+            }
+        }
+
+        function calculateRoute() {
+            if (!currentObserverPos || !currentVictimPos || !directionsService) return;
+
+            directionsService.route({
+                origin: currentObserverPos,
+                destination: currentVictimPos,
+                travelMode: google.maps.TravelMode.DRIVING
+            }, (response, status) => {
+                if (status === "OK") {
+                    directionsRenderer.setDirections(response);
+
+                    // Extract Distance & Duration
+                    const leg = response.routes[0].legs[0];
+                    if (leg) {
+                        document.getElementById('distance-val').innerText = leg.distance.text.replace(' km', '').replace(' m', ''); // Rough cleanup, text usually good
+                        document.getElementById('duration-val').innerText = leg.duration.text.replace(' mins', '').replace(' min', '');
+                    }
+                } else {
+                    console.log("Directions request failed due to " + status);
+                }
+            });
+        }
+
+    </script>
+
+    <!-- LOAD GOOGLE MAPS API (Place YOUR_API_KEY below) -->
+    <!-- Libraries: places not strictly needed but good for future. -->
+    <script
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB_YhqTW6bgHqPCM-iA2EgJ19nmypn_kMU&callback=initMap&libraries=geometry"
+        async defer></script>
+</body>
+
+</html>

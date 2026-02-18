@@ -23,20 +23,25 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // Screens import
+import CustomTabBar from './src/components/CustomTabBar';
 import MapScreen from './src/screens/MapScreen';
 import SafetyScreen from './src/screens/SafetyScreen';
+import FakeCallScreen from './src/screens/FakeCallScreen';
 import ProfileStack from './src/navigation/ProfileStack';
 import NearbyPlacesScreen from './src/screens/NearbyPlacesScreen';
+import ContactsScreen from './src/screens/ContactsScreen';
+import GuardianScreen from './src/screens/GuardianScreen';
 import { AuthProvider } from './src/context/AuthContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import * as Location from 'expo-location';
 import { SOSProvider, useSOS } from './src/context/SOSContext';
 import { useShakeSOS } from './src/features/sos/useShakeSOS';
 import { initDB } from './src/services/sqlite';
+import { auth } from './src/services/firebaseClient';
 import { runStartupCleanup } from './src/utils/databaseCleanup';
 import SOSConfirmationModal from './src/components/SOSConfirmationModal';
 import NoContactsModal from './src/components/NoContactsModal'; // Import the new modal
-import { ProfileStackParamList } from './src/navigation/ProfileStack';
+import { ProfileStackParamList } from './src/navigation/types';
 
 // --- NAVIGATION TYPES ---
 // It's best practice to keep these in a dedicated types file,
@@ -52,6 +57,9 @@ export type RootTabParamList = {
 export type RootStackParamList = {
   Main: NavigatorScreenParams<RootTabParamList>;
   NearbyPlaces: { type: 'hospital' | 'police' };
+  FakeCall: { callerName?: string };
+  Contacts: undefined;
+  Guardian: undefined;
 };
 
 // Helper to lighten/darken hex colors (percent: -100..100)
@@ -80,7 +88,7 @@ function ShakeSOSManager() {
   const sosContext = useSOS();
   const enabled = sosContext?.shakeEnabled ?? false;
   const isConfirmingSOS = sosContext?.isConfirmingSOS ?? false;
-  
+
   // This callback will trigger the SOS confirmation modal.
   const handleShake = React.useCallback(() => {
     // Only start confirmation if the function exists on the context and we're not already confirming.
@@ -120,158 +128,8 @@ const Tab = createBottomTabNavigator<RootTabParamList>();
 const Stack = createStackNavigator<RootStackParamList>();
 
 // Home Screen Component
-function HomeScreen({ navigation }: { navigation: any }) {
-  const { colors } = useTheme();
-  const styles = makeStyles(colors);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.9)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 800,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        tension: 20,
-        friction: 7,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
-
-  const shareLocation = async () => {
-    try {
-      console.log("Fetching live location for sharing...");
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location permission is required to share your location.');
-        return;
-      }
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-      const { latitude, longitude } = location.coords;
-      const message = `Hi! I'm sharing my current location with you: https://maps.google.com/?q=${latitude},${longitude}`;
-      const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
-      
-      const canOpen = await Linking.canOpenURL(whatsappUrl);
-      if (canOpen) {
-        await Linking.openURL(whatsappUrl);
-      } else {
-        // Fallback to web WhatsApp
-        const webUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
-        await Linking.openURL(webUrl);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Could not share location. Please ensure WhatsApp is installed.');
-    }
-  };
-
-  const planRoute = () => {
-    navigation.navigate('Navigate');
-  };
-
-  const handleEmergency = () => {
-    const phoneNumber = '911';
-    const url = `tel:${phoneNumber}`;
-
-    Linking.canOpenURL(url)
-      .then((supported) => {
-        if (supported) {
-          return Linking.openURL(url);
-        } else {
-          Alert.alert('Action Not Supported', 'Unable to open the phone dialer on this device.');
-        }
-      })
-      .catch((err) => console.error('An error occurred', err));
-  };
-
-  return (
-    <LinearGradient
-      colors={[colors.background, colors.backgroundLight, colors.backgroundCard]}
-      style={styles.container}
-    >
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Animated.View
-          style={[
-            styles.content,
-            {
-              opacity: fadeAnim,
-              transform: [{ scale: scaleAnim }],
-            },
-          ]}
-        >
-          <View style={styles.header}>
-            <Text style={styles.greeting}>AMBA 🛡️</Text>
-            <Text style={styles.subtitle}>Your Personal Safety Companion</Text>
-          </View>
-
-          {/* Quick Actions */}
-          <View style={styles.quickActions}>
-            <TouchableOpacity activeOpacity={0.8} style={styles.actionCardWrapper} onPress={handleEmergency}>
-              <LinearGradient
-                colors={[colors.danger, shade(colors.danger, -15), colors.accent]}
-                style={styles.actionCard}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <Text style={styles.actionIcon}>🚨</Text>
-                <Text style={styles.actionText}>Emergency</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-
-            <TouchableOpacity activeOpacity={0.8} style={styles.actionCardWrapper} onPress={shareLocation}>
-              <LinearGradient
-                colors={[colors.safe, shade(colors.safe, -15)]}
-                style={styles.actionCard}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <Text style={styles.actionIcon}>📍</Text>
-                <Text style={styles.actionText}>Share Location</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-
-          {/* Safety Score Card */}
-          <View style={styles.safetyCard}>
-            <LinearGradient
-              colors={[colors.backgroundCard, colors.backgroundLight]}
-              style={styles.safetyGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            >
-              <Text style={styles.safetyTitle}>Current Area Safety</Text>
-              <View style={styles.safetyScore}>
-                <Text style={styles.scoreNumber}>85</Text>
-                <Text style={styles.scoreLabel}>/100</Text>
-              </View>
-            <Text style={[styles.safetyStatus, { color: colors.safe }]}>✅ Safe Zone</Text>
-            </LinearGradient>
-          </View>
-
-          {/* Route Input Card */}
-          <TouchableOpacity activeOpacity={0.8} style={styles.routeCard} onPress={planRoute}>
-            <LinearGradient
-              colors={[colors.primary, shade(colors.primary, -15)]}
-              style={styles.routeGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
-              <Text style={styles.routeIcon}>🗺️</Text>
-              <Text style={styles.routeText}>Plan Your Safe Route</Text>
-              <Text style={styles.routeArrow}>→</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-
-        </Animated.View>
-      </ScrollView>
-    </LinearGradient>
-  );
-}
+import HomeScreen from './src/screens/HomeScreen';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 /**
  * Tab Navigator component
@@ -299,28 +157,18 @@ function MainTabNavigator() {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         // silently ignore if denied
-      } catch {}
+      } catch { }
     })();
   }, []);
 
+
   return (
     <Tab.Navigator
+      tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,
-        tabBarStyle: {
-          backgroundColor: colors.backgroundCard,
-          borderTopWidth: 0,
-          elevation: 0,
-          height: Platform.OS === 'ios' ? 90 : 70,
-          paddingBottom: Platform.OS === 'ios' ? 25 : 10,
-          paddingTop: 10,
-        },
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: '#64748B',
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
-        },
+        // Hide default tab bar style since we are replacing it
+        tabBarStyle: { display: 'none' },
       }}
     >
       <Tab.Screen
@@ -374,14 +222,19 @@ function MainTabNavigator() {
 // Main App Component
 function InnerApp() {
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Main" component={MainTabNavigator} />
-          <Stack.Screen name="NearbyPlaces" component={NearbyPlacesScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <NavigationContainer>
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Main" component={MainTabNavigator} />
+            <Stack.Screen name="NearbyPlaces" component={NearbyPlacesScreen} />
+            <Stack.Screen name="FakeCall" component={FakeCallScreen} />
+            <Stack.Screen name="Contacts" component={ContactsScreen} />
+            <Stack.Screen name="Guardian" component={GuardianScreen} />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -389,50 +242,31 @@ function AppContent() {
   // Safely get properties from the context, providing fallbacks.
   const sosContext = useSOS();
   const isConfirmingSOS = sosContext?.isConfirmingSOS ?? false;
-  const confirmSOS = sosContext?.confirmSOS ?? (() => {});
-  const cancelSOSConfirmation = sosContext?.cancelSOSConfirmation ?? (() => {});
-  
+  const confirmSOS = sosContext?.confirmSOS ?? (() => { });
+  const cancelSOSConfirmation = sosContext?.cancelSOSConfirmation ?? (() => { });
+
   // New state and functions for the no-contacts modal
   const noContactsModalVisible = sosContext?.noContactsModalVisible ?? false;
-  const openWhatsApp = sosContext?.openWhatsApp ?? (() => {});
-  const closeNoContactsModal = sosContext?.closeNoContactsModal ?? (() => {});
+  const openWhatsApp = sosContext?.openWhatsApp ?? (() => { });
+  const closeNoContactsModal = sosContext?.closeNoContactsModal ?? (() => { });
 
 
-  const handleConfirm = async () => {
-    try {
-      console.log("SOS Confirmed! Sending location...");
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location permission is required to send your location.');
-        return;
-      }
-      const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const { latitude, longitude } = location.coords;
-      const message = `EMERGENCY! I need help. My current location is: https://maps.google.com/?q=${latitude},${longitude}`;
-      const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
-  
-      const canOpen = await Linking.canOpenURL(whatsappUrl);
-      if (canOpen) {
-        await Linking.openURL(whatsappUrl);
-        confirmSOS(); // Close modal after successfully opening WhatsApp
-      } else {
-        // Fallback for when WhatsApp is not installed
-        const webUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
-        await Linking.openURL(webUrl);
-        confirmSOS(); // Close modal after successfully opening web link
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Could not send location. Please ensure you have an internet connection.');
-    }
+  /* 
+   * FIXED: We now delegate the SOS confirmation logic entirely to the SOSContext.
+   * This ensures that Firestore tracking, SMS Blasts (expo-sms), and WhatsApp fallbacks 
+   * are handled centrally and correctly.
+   */
+  const handleConfirm = () => {
+    confirmSOS();
   };
 
   return (
     <>
       <InnerApp />
-      <SOSConfirmationModal 
-        visible={isConfirmingSOS} 
-        onConfirm={handleConfirm} 
-        onCancel={cancelSOSConfirmation} 
+      <SOSConfirmationModal
+        visible={isConfirmingSOS}
+        onConfirm={handleConfirm}
+        onCancel={cancelSOSConfirmation}
       />
       <NoContactsModal
         visible={noContactsModalVisible}
@@ -460,7 +294,7 @@ export default function App() {
 // ... aapke poore styles ...
 const makeStyles = (colors: any) => StyleSheet.create({
   container: {
-    flex: 1, 
+    flex: 1,
   },
   centerContainer: {
     flex: 1,

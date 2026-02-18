@@ -1,0 +1,49 @@
+.page {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 4rem 2rem;
+}
+
+.title { font-size: 2.5rem; font-weight: 800; margin-bottom: 0.5rem; }
+.subtitle { color: var(--text-muted); margin-bottom: 3rem; }
+
+.list { display: flex; flex-direction: column; gap: 1.5rem; }
+
+.helpCard {
+  background: var(--card-bg);
+  border: 2px solid #e53e3e; /* Red border for help items */
+  border-radius: 1rem;
+  padding: 1.5rem;
+  transition: transform 0.2s;
+}
+
+.helpCard:hover { transform: scale(1.01); }
+
+.cardHeader { display: flex; justify-content: space-between; margin-bottom: 1rem; }
+
+.riskBadge {
+  color: white;
+  padding: 0.3rem 0.8rem;
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.postTitle { font-size: 1.4rem; margin-bottom: 0.5rem; }
+.location { font-size: 0.95rem; font-weight: 600; color: var(--text-muted); margin-bottom: 1rem; }
+.excerpt { line-height: 1.6; margin-bottom: 1.5rem; }
+
+.cardActions { display: flex; gap: 1rem; }
+
+.viewBtn, .offerBtn {
+  padding: 0.7rem 1.2rem;
+  border-radius: 0.5rem;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border: none;
+}
+
+.viewBtn { background: var(--card-bg-secondary); color: var(--foreground); }
+.offerBtn { background: #e53e3e; color: white; }
